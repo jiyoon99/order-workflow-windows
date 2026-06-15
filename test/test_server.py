@@ -298,8 +298,11 @@ class ServerFlowTests(unittest.TestCase):
         self.assertEqual(exported[0]["출고담당자"], "관리자")
         self.assertEqual(exported[0]["제품관리번호"], "PC-2026-0001")
 
-        status, _, _ = self.request("POST", "/api/export/shipped")
+        status, _, content = self.request("POST", "/api/export/shipped")
         self.assertEqual(status, 200)
+        self.assertEqual(len(read_first_sheet(content)), 1)
+        self.assertEqual(self.request("GET", "/api/export/shipped")[0], 400)
+        self.assertEqual(self.request("POST", "/api/export/shipped")[0], 400)
         status, _, content = self.request("GET", "/api/orders")
         self.assertEqual(status, 200)
         self.assertEqual(len(json.loads(content)), 3)

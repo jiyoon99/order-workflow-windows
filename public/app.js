@@ -470,7 +470,7 @@ $("#manual-order-form").addEventListener("submit", async (event) => {
 $("#export-button").addEventListener("click", async () => {
   const button = $("#export-button");
   button.disabled = true;
-  showMessage("누적 출고 완료 엑셀을 만들고 있습니다.");
+  showMessage("새로 출고 완료된 주문의 엑셀을 만들고 있습니다.");
   try {
     const response = await fetch("/api/export/shipped", { method:"POST" });
     if (!response.ok) {
@@ -480,7 +480,7 @@ $("#export-button").addEventListener("click", async () => {
     const blob = await response.blob();
     const disposition = response.headers.get("Content-Disposition") || "";
     const today = new Date().toLocaleDateString("sv-SE");
-    const filename = disposition.match(/filename="([^"]+)"/)?.[1] || `shipped-orders-all-${today}.xlsx`;
+    const filename = disposition.match(/filename="([^"]+)"/)?.[1] || `shipped-orders-${today}.xlsx`;
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
@@ -490,7 +490,7 @@ $("#export-button").addEventListener("click", async () => {
     link.remove();
     URL.revokeObjectURL(url);
     await loadOrders();
-    showMessage("이전 출고 건과 새 출고 건을 하나의 누적 엑셀로 저장했습니다. 새 출고 건은 주문 목록에서 보관 처리했습니다.");
+    showMessage("새 출고 건을 엑셀로 저장하고 완료 주문 보관함으로 이동했습니다. 다음 엑셀에는 다시 포함되지 않습니다.");
   } catch (error) {
     showMessage(error.message, true);
   } finally {

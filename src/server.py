@@ -534,17 +534,16 @@ class Handler(SimpleHTTPRequestHandler):
                     order["updatedAt"] = archived_at
                 if new_shipped:
                     write_orders(orders)
-            shipped = [order for order in orders if order.get("shippingDone")]
-            if not shipped:
-                return self._json(400, {"error": "출고 완료된 주문이 없습니다."})
-        shipped.sort(key=lambda order: order.get("shippingAt", ""))
-        rows = [[index, *(order.get(field, "") for field in fields)] for index, order in enumerate(shipped, 1)]
+            if not new_shipped:
+                return self._json(400, {"error": "새로 출고 완료된 주문이 없습니다."})
+        new_shipped.sort(key=lambda order: order.get("shippingAt", ""))
+        rows = [[index, *(order.get(field, "") for field in fields)] for index, order in enumerate(new_shipped, 1)]
         content = write_xlsx(headers, rows)
         if archive:
-            write_audit("orders_exported", self._current_user(), count=len(shipped), archived=len(new_shipped))
+            write_audit("orders_exported", self._current_user(), count=len(new_shipped), archived=len(new_shipped))
         self.send_response(200)
         self.send_header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-        self.send_header("Content-Disposition", f'attachment; filename="shipped-orders-all-{date.today().isoformat()}.xlsx"')
+        self.send_header("Content-Disposition", f'attachment; filename="shipped-orders-{date.today().isoformat()}.xlsx"')
         self.send_header("Content-Length", str(len(content)))
         self.end_headers()
         self.wfile.write(content)
