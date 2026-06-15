@@ -7,6 +7,7 @@ import threading
 import unittest
 import zipfile
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
@@ -57,8 +58,10 @@ class OrderSortingTests(unittest.TestCase):
                 server.DATA_FILE = Path(directory) / "orders.json"
                 server.write_orders([{"id": "first"}])
                 server.write_orders([{"id": "second"}])
+                self.assertEqual(server.DATA_FILE.stat().st_mode & 0o777, 0o600)
                 backups = list((Path(directory) / "backups").glob("orders.json.*.bak"))
                 self.assertEqual(len(backups), 1)
+                self.assertEqual(backups[0].stat().st_mode & 0o777, 0o600)
                 self.assertEqual(json.loads(backups[0].read_text()), [{"id": "first"}])
             finally:
                 server.DATA_FILE = original
@@ -70,6 +73,7 @@ class OrderSortingTests(unittest.TestCase):
                 server.AUDIT_FILE = Path(directory) / "audit.jsonl"
                 server.write_audit("order_updated", {"id": "user-1", "displayName": "작업자"}, orderId="order-1", action="production")
                 record = json.loads(server.AUDIT_FILE.read_text())
+                self.assertEqual(server.AUDIT_FILE.stat().st_mode & 0o777, 0o600)
                 self.assertEqual(record["event"], "order_updated")
                 self.assertEqual(record["orderId"], "order-1")
                 self.assertNotIn("phone", record)
@@ -284,12 +288,19 @@ class ServerFlowTests(unittest.TestCase):
         status, _, content = self.request("PATCH", f"/api/orders/{order['id']}", update, {"Content-Type": "application/json", "Content-Length": str(len(update))})
         self.assertEqual(status, 200)
         self.assertFalse(json.loads(content)["preparing"])
-        update = json.dumps({"action": "shipping", "checked": True, "worker": "테스트작업자", "courier": "CJ대한통운"}).encode()
+        update = json.dumps({"action": "shipping", "checked": True, "worker": "테스트작업자", "courier": "CJ대한통운", "trackingNumber": "1234567890"}).encode()
         status, _, _ = self.request("PATCH", f"/api/orders/{order['id']}", update, {"Content-Type": "application/json", "Content-Length": str(len(update))})
         self.assertEqual(status, 200)
         undo_production = json.dumps({"action": "production", "checked": False}).encode()
         status, _, _ = self.request("PATCH", f"/api/orders/{order['id']}", undo_production, {"Content-Type": "application/json", "Content-Length": str(len(undo_production))})
         self.assertEqual(status, 409)
+
+        with mock.patch.object(server, "write_xlsx", side_effect=RuntimeError("test failure")):
+            status, _, content = self.request("POST", "/api/export/shipped")
+        self.assertEqual(status, 500)
+        self.assertIn("보관 처리되지 않았습니다", json.loads(content)["error"])
+        status, _, content = self.request("GET", "/api/orders")
+        self.assertIn(order["id"], [item["id"] for item in json.loads(content)])
 
         status, _, content = self.request("GET", "/api/export/shipped")
         self.assertEqual(status, 200)
@@ -297,6 +308,7 @@ class ServerFlowTests(unittest.TestCase):
         self.assertEqual(len(exported), 1)
         self.assertEqual(exported[0]["출고담당자"], "관리자")
         self.assertEqual(exported[0]["제품관리번호"], "PC-2026-0001")
+        self.assertEqual(exported[0]["송장번호"], "1234567890")
 
         status, _, content = self.request("POST", "/api/export/shipped")
         self.assertEqual(status, 200)
@@ -337,6 +349,24 @@ class ServerFlowTests(unittest.TestCase):
         self.assertEqual(self.request("GET", "/api/users")[0], 403)
         self.assertEqual(self.logout()[0], 200)
         self.assertEqual(self.login("admin")[0], 200)
+
+    def test_rejects_too_many_uploaded_files(self):
+        self.logout()
+        self.assertEqual(self.login("admin")[0], 200)
+        boundary = "too-many-files-boundary"
+        chunks = []
+        for index in range(server.MAX_UPLOAD_FILES + 1):
+            chunks.extend([
+                f"--{boundary}\r\n".encode(),
+                f'Content-Disposition: form-data; name="files"; filename="orders-{index}.xlsx"\r\n'.encode(),
+                b"Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet\r\n\r\n",
+                b"invalid but must be rejected before parsing\r\n",
+            ])
+        chunks.append(f"--{boundary}--\r\n".encode())
+        body = b"".join(chunks)
+        status, _, content = self.request("POST", "/api/import", body, {"Content-Type": f"multipart/form-data; boundary={boundary}", "Content-Length": str(len(body))})
+        self.assertEqual(status, 400)
+        self.assertIn("최대", json.loads(content)["error"])
 
     def test_role_permissions(self):
         worker = json.dumps({"username": "permission-worker", "displayName": "권한작업자", "password": "password123", "role": "worker"}).encode()

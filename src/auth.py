@@ -40,12 +40,15 @@ class AuthStore:
 
     def write_users(self, users: list[dict]) -> None:
         self.file_path.parent.mkdir(parents=True, exist_ok=True)
+        os.chmod(self.file_path.parent, 0o700)
         if self.file_path.exists():
             backup_dir = self.file_path.parent / "backups"
             backup_dir.mkdir(parents=True, exist_ok=True)
+            os.chmod(backup_dir, 0o700)
             backup = backup_dir / f"{self.file_path.name}.{time.strftime('%Y%m%d')}.bak"
             if not backup.exists():
                 shutil.copy2(self.file_path, backup)
+                os.chmod(backup, 0o600)
             cutoff = time.time() - 14 * 24 * 60 * 60
             for old_backup in backup_dir.glob(f"{self.file_path.name}.*.bak"):
                 if old_backup.stat().st_mtime < cutoff:
@@ -55,7 +58,9 @@ class AuthStore:
             json.dump(users, output, ensure_ascii=False, indent=2)
             output.flush()
             os.fsync(output.fileno())
+        os.chmod(temporary, 0o600)
         temporary.replace(self.file_path)
+        os.chmod(self.file_path, 0o600)
 
     @staticmethod
     def hash_password(password: str) -> str:

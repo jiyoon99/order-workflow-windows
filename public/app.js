@@ -158,7 +158,7 @@ function render() {
       <td data-label="준비 중"><div class="check-card"><input class="preparing-check" type="checkbox" ${order.preparing ? "checked" : ""}><label>준비 중</label><small>${order.preparing ? `${escapeHtml(order.preparingBy)} · ${formatDate(order.preparingAt)}` : "작업자 미지정"}</small></div></td>
       <td data-label="제품 관리번호"><div class="management-field"><input class="management-number" maxlength="100" placeholder="바코드 스캔" value="${escapeHtml(state.managementDrafts[order.id] ?? order.managementNumber)}"><button class="save-management" type="button">저장</button><small>${order.managementNumberBy ? `${escapeHtml(order.managementNumberBy)} · ${formatDate(order.managementNumberAt)}` : "미등록"}</small></div></td>
       <td data-label="제작 완료"><div class="check-card"><input class="production-check" type="checkbox" ${order.productionDone ? "checked" : ""}><label>제작 완료</label><small>${order.productionDone ? `${escapeHtml(order.productionBy)} · ${formatDate(order.productionAt)}` : "담당자 미지정"}</small></div></td>
-      <td data-label="출고 처리"><div class="check-card"><input class="shipping-check" type="checkbox" ${order.shippingDone ? "checked" : ""}><label>출고 완료</label><small>${order.shippingDone ? `${escapeHtml(order.shippingBy)} · ${formatDate(order.shippingAt)}` : "출고 전"}</small><div class="shipping-fields"><input class="courier" placeholder="택배사" value="${escapeHtml(order.courier)}"></div>${canCancelOrder(order) ? `<button class="cancel-order" type="button">주문 취소</button>` : ""}</div></td>
+      <td data-label="출고 처리"><div class="check-card"><input class="shipping-check" type="checkbox" ${order.shippingDone ? "checked" : ""}><label>출고 완료</label><small>${order.shippingDone ? `${escapeHtml(order.shippingBy)} · ${formatDate(order.shippingAt)}` : "출고 전"}</small><div class="shipping-fields"><input class="courier" maxlength="100" placeholder="택배사" value="${escapeHtml(order.courier)}"><input class="tracking-number" maxlength="100" placeholder="송장번호" value="${escapeHtml(order.trackingNumber)}"></div>${canCancelOrder(order) ? `<button class="cancel-order" type="button">주문 취소</button>` : ""}</div></td>
     </tr>`;
   }).join("");
 }
@@ -286,25 +286,31 @@ async function cancelOrder(row) {
 }
 
 async function updateOrder(row, action, checked) {
-  const body = { action, checked, worker: worker() };
-  if (action === "shipping") {
-    body.courier = row.querySelector(".courier").value;
-  }
-  if (action === "managementNumber") body.managementNumber = row.querySelector(".management-number").value;
-  const response = await fetch(`/api/orders/${row.dataset.id}`, { method:"PATCH", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body) });
-  const result = await response.json();
-  if (!response.ok) {
-    if (result.order) {
-      const index = state.orders.findIndex((order) => order.id === result.order.id);
-      if (index >= 0) state.orders[index] = result.order;
+  try {
+    const body = { action, checked, worker: worker() };
+    if (action === "shipping") {
+      body.courier = row.querySelector(".courier").value;
+      body.trackingNumber = row.querySelector(".tracking-number").value;
     }
-    showMessage(result.error, true); render(); return;
+    if (action === "managementNumber") body.managementNumber = row.querySelector(".management-number").value;
+    const response = await fetch(`/api/orders/${row.dataset.id}`, { method:"PATCH", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body) });
+    const result = await response.json();
+    if (!response.ok) {
+      if (result.order) {
+        const index = state.orders.findIndex((order) => order.id === result.order.id);
+        if (index >= 0) state.orders[index] = result.order;
+      }
+      showMessage(result.error, true); render(); return;
+    }
+    const index = state.orders.findIndex((order) => order.id === result.id);
+    if (index >= 0) state.orders[index] = result;
+    if (action === "managementNumber") delete state.managementDrafts[result.id];
+    showMessage(`${result.orderNumber} 주문이 저장되었습니다.`);
+    render();
+  } catch (error) {
+    showMessage(`서버 연결 오류: ${error.message}. 주문 상태를 다시 불러왔습니다.`, true);
+    await loadOrders().catch(() => {});
   }
-  const index = state.orders.findIndex((order) => order.id === result.id);
-  state.orders[index] = result;
-  if (action === "managementNumber") delete state.managementDrafts[result.id];
-  showMessage(`${result.orderNumber} 주문이 저장되었습니다.`);
-  render();
 }
 
 async function loadUsers() {

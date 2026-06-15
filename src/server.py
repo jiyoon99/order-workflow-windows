@@ -34,6 +34,7 @@ ORDER_ADMIN_ROLES = {"owner", "developer", "sales_manager", "md"}
 AS_HISTORY_ROLES = {"owner", "developer", "as_manager"}
 ROLE_RANK = {"owner": 0, "developer": 1, "as_manager": 2, "sales_manager": 3, "md": 4, "worker": 5}
 MAX_UPLOAD_BYTES = 30 * 1024 * 1024
+MAX_UPLOAD_FILES = 10
 MAX_ARCHIVE_FILES = 20
 MAX_ARCHIVE_UNCOMPRESSED_BYTES = 100 * 1024 * 1024
 BACKUP_RETENTION_DAYS = 14
@@ -65,10 +66,12 @@ def backup_file(file_path: Path) -> None:
         return
     backup_dir = file_path.parent / "backups"
     backup_dir.mkdir(parents=True, exist_ok=True)
+    os.chmod(backup_dir, 0o700)
     today = datetime.now().strftime("%Y%m%d")
     backup = backup_dir / f"{file_path.name}.{today}.bak"
     if not backup.exists():
         shutil.copy2(file_path, backup)
+        os.chmod(backup, 0o600)
     cutoff = time.time() - BACKUP_RETENTION_DAYS * 24 * 60 * 60
     for old_backup in backup_dir.glob(f"{file_path.name}.*.bak"):
         if old_backup.stat().st_mtime < cutoff:
@@ -86,6 +89,9 @@ def write_audit(event: str, user: dict | None = None, **details: object) -> None
     AUDIT_FILE.parent.mkdir(parents=True, exist_ok=True)
     with AUDIT_LOCK, AUDIT_FILE.open("a", encoding="utf-8") as output:
         output.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
+        output.flush()
+        os.fsync(output.fileno())
+        os.chmod(AUDIT_FILE, 0o600)
 
 
 def login_key(client_ip: str, username: str) -> str:
@@ -110,13 +116,16 @@ def record_login_result(key: str, success: bool, now: float | None = None) -> No
 
 def write_orders(orders: list[dict]) -> None:
     DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
+    os.chmod(DATA_FILE.parent, 0o700)
     backup_file(DATA_FILE)
     temporary = DATA_FILE.with_suffix(".tmp")
     with temporary.open("w", encoding="utf-8") as output:
         json.dump(orders, output, ensure_ascii=False, indent=2)
         output.flush()
         os.fsync(output.fileno())
+    os.chmod(temporary, 0o600)
     temporary.replace(DATA_FILE)
+    os.chmod(DATA_FILE, 0o600)
 
 
 def archive_excel_files(archive: zipfile.ZipFile) -> list[zipfile.ZipInfo]:
@@ -291,8 +300,10 @@ class Handler(SimpleHTTPRequestHandler):
             files = [part for part in message.iter_attachments() if part.get_filename()]
             if not files:
                 return self._json(400, {"error": "엑셀 파일을 선택하세요."})
+            if len(files) > MAX_UPLOAD_FILES:
+                return self._json(400, {"error": f"한 번에 최대 {MAX_UPLOAD_FILES}개 파일까지 가져올 수 있습니다."})
             imported, errors = [], []
-            for part in files[:10]:
+            for part in files:
                 filename = Path(part.get_filename()).name
                 try:
                     content = part.get_payload(decode=True)
@@ -449,9 +460,13 @@ class Handler(SimpleHTTPRequestHandler):
                 elif action == "shipping":
                     if checked and not order.get("productionDone"):
                         return self._json(409, {"error": "제작 완료 후 출고 처리할 수 있습니다.", "order": order})
+                    courier = str(payload.get("courier", "")).strip()
+                    tracking_number = str(payload.get("trackingNumber", "")).strip()
+                    if len(courier) > 100 or len(tracking_number) > 100:
+                        return self._json(400, {"error": "택배사와 송장번호는 100자 이내로 입력하세요.", "order": order})
                     order.update({
                         "shippingDone": checked, "shippingBy": worker if checked else "", "shippingAt": now if checked else "",
-                        "courier": str(payload.get("courier", "")).strip(),
+                        "courier": courier, "trackingNumber": tracking_number,
                     })
                 else:
                     return self._json(400, {"error": "잘못된 처리 요청입니다."})
@@ -522,11 +537,19 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json(400, {"error": "계정 정보를 확인하세요."})
 
     def _export_shipped(self, archive: bool) -> None:
-        headers = ["번호", "채널", "주문번호", "주문일", "상품명", "옵션", "수량", "상품코드", "제품관리번호", "수령인", "연락처", "우편번호", "주소", "배송메시지", "택배사", "제작담당자", "제작완료일", "출고담당자", "출고완료일"]
-        fields = ["channel", "orderNumber", "orderedAt", "productName", "optionName", "quantity", "productCode", "managementNumber", "recipient", "phone", "postalCode", "address", "deliveryMessage", "courier", "productionBy", "productionAt", "shippingBy", "shippingAt"]
+        headers = ["번호", "채널", "주문번호", "주문일", "상품명", "옵션", "수량", "상품코드", "제품관리번호", "수령인", "연락처", "우편번호", "주소", "배송메시지", "택배사", "송장번호", "제작담당자", "제작완료일", "출고담당자", "출고완료일"]
+        fields = ["channel", "orderNumber", "orderedAt", "productName", "optionName", "quantity", "productCode", "managementNumber", "recipient", "phone", "postalCode", "address", "deliveryMessage", "courier", "trackingNumber", "productionBy", "productionAt", "shippingBy", "shippingAt"]
         with LOCK:
             orders = read_orders()
             new_shipped = [order for order in orders if order.get("shippingDone") and not order.get("archivedAt")]
+            if not new_shipped:
+                return self._json(400, {"error": "새로 출고 완료된 주문이 없습니다."})
+            new_shipped.sort(key=lambda order: order.get("shippingAt", ""))
+            rows = [[index, *(order.get(field, "") for field in fields)] for index, order in enumerate(new_shipped, 1)]
+            try:
+                content = write_xlsx(headers, rows)
+            except Exception:
+                return self._json(500, {"error": "출고 엑셀을 만들지 못했습니다. 주문은 보관 처리되지 않았습니다."})
             if archive:
                 archived_at = datetime.now(timezone.utc).isoformat()
                 for order in new_shipped:
@@ -534,11 +557,6 @@ class Handler(SimpleHTTPRequestHandler):
                     order["updatedAt"] = archived_at
                 if new_shipped:
                     write_orders(orders)
-            if not new_shipped:
-                return self._json(400, {"error": "새로 출고 완료된 주문이 없습니다."})
-        new_shipped.sort(key=lambda order: order.get("shippingAt", ""))
-        rows = [[index, *(order.get(field, "") for field in fields)] for index, order in enumerate(new_shipped, 1)]
-        content = write_xlsx(headers, rows)
         if archive:
             write_audit("orders_exported", self._current_user(), count=len(new_shipped), archived=len(new_shipped))
         self.send_response(200)

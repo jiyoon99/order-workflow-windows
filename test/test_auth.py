@@ -17,6 +17,7 @@ class AuthTests(unittest.TestCase):
             store.create_user("worker1", "작업자1", "password123", "worker", datetime.now(timezone.utc).isoformat())
             raw = (Path(directory) / "users.json").read_text()
             self.assertNotIn("password123", raw)
+            self.assertEqual((Path(directory) / "users.json").stat().st_mode & 0o777, 0o600)
             authenticated = store.authenticate("worker1", "password123")
             self.assertIsNotNone(authenticated)
             token, user = authenticated
