@@ -28,6 +28,7 @@ USERS_FILE = Path(os.getenv("USERS_FILE", ROOT / "data" / "users.json"))
 AUDIT_FILE = Path(os.getenv("AUDIT_FILE", ROOT / "data" / "audit.jsonl"))
 LOCK = threading.Lock()
 AUDIT_LOCK = threading.Lock()
+SETUP_LOCK = threading.Lock()
 AUTH = AuthStore(USERS_FILE)
 MEMBER_MANAGEMENT_ROLES = {"owner", "developer"}
 ORDER_ADMIN_ROLES = {"owner", "developer", "sales_manager", "md"}
@@ -112,6 +113,18 @@ def record_login_result(key: str, success: bool, now: float | None = None) -> No
             LOGIN_FAILURES.pop(key, None)
         else:
             LOGIN_FAILURES.setdefault(key, []).append(now if now is not None else time.time())
+
+
+def new_unique_orders(existing: list[dict], imported: list[dict]) -> list[dict]:
+    keys = {order["importKey"] for order in existing}
+    added = []
+    for order in imported:
+        key = order["importKey"]
+        if key in keys:
+            continue
+        keys.add(key)
+        added.append(order)
+    return added
 
 
 def write_orders(orders: list[dict]) -> None:
@@ -200,7 +213,12 @@ class Handler(SimpleHTTPRequestHandler):
         return user
 
     def _body(self) -> bytes:
-        length = int(self.headers.get("Content-Length", "0"))
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except (TypeError, ValueError):
+            raise ValueError("요청 본문 크기가 올바르지 않습니다.")
+        if length < 0:
+            raise ValueError("요청 본문 크기가 올바르지 않습니다.")
         if length > MAX_UPLOAD_BYTES:
             raise ValueError("업로드 크기는 최대 30MB입니다.")
         return self.rfile.read(length)
@@ -252,8 +270,9 @@ class Handler(SimpleHTTPRequestHandler):
     def do_POST(self) -> None:
         path = urlparse(self.path).path
         if path == "/api/auth/setup":
-            if AUTH.read_users(): return self._json(409, {"error": "관리자 설정이 이미 완료됐습니다."})
-            return self._create_user(role="owner", login_after=True)
+            with SETUP_LOCK:
+                if AUTH.read_users(): return self._json(409, {"error": "관리자 설정이 이미 완료됐습니다."})
+                return self._create_user(role="owner", login_after=True)
         if path == "/api/auth/register":
             if not AUTH.read_users():
                 return self._json(409, {"error": "먼저 최초 관리자 계정을 설정하세요."})
@@ -273,7 +292,7 @@ class Handler(SimpleHTTPRequestHandler):
                 token, user = authenticated
                 write_audit("login_succeeded", user, clientIp=self.client_address[0])
                 return self._json(200, {"user": user}, {"Set-Cookie": f"halfbook_session={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=43200"})
-            except json.JSONDecodeError: return self._json(400, {"error": "로그인 정보를 확인하세요."})
+            except (ValueError, json.JSONDecodeError): return self._json(400, {"error": "로그인 정보를 확인하세요."})
         if path == "/api/auth/logout":
             AUTH.logout(self._session_token())
             return self._json(200, {"ok": True}, {"Set-Cookie": "halfbook_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0"})
@@ -321,8 +340,7 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json(400, {"error": "\n".join(errors)})
             with LOCK:
                 orders = read_orders()
-                keys = {order["importKey"] for order in orders}
-                added = [order for order in imported if order["importKey"] not in keys]
+                added = new_unique_orders(orders, imported)
                 orders.extend(added)
                 write_orders(orders)
             write_audit("orders_imported", user, added=len(added), duplicates=len(imported) - len(added), files=len(files))

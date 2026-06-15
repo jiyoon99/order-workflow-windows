@@ -42,6 +42,25 @@ class OrderSortingTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "최대"):
                 server.archive_excel_files(archive)
 
+    def test_rejects_invalid_content_length(self):
+        handler = object.__new__(server.Handler)
+        handler.rfile = io.BytesIO(b"payload")
+        for value in ("invalid", "-1"):
+            handler.headers = {"Content-Length": value}
+            with self.assertRaisesRegex(ValueError, "크기"):
+                handler._body()
+
+    def test_removes_duplicates_within_one_import_batch(self):
+        existing = [{"importKey": "existing"}]
+        imported = [
+            {"importKey": "new-1", "orderNumber": "1"},
+            {"importKey": "existing", "orderNumber": "2"},
+            {"importKey": "new-1", "orderNumber": "1-duplicate"},
+            {"importKey": "new-2", "orderNumber": "3"},
+        ]
+        added = server.new_unique_orders(existing, imported)
+        self.assertEqual([order["orderNumber"] for order in added], ["1", "3"])
+
     def test_blocks_repeated_login_failures_and_clears_on_success(self):
         key = "127.0.0.1:test-user"
         server.LOGIN_FAILURES.clear()
