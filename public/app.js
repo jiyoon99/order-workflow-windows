@@ -158,7 +158,7 @@ function render() {
       <td data-label="준비 중"><div class="check-card"><input class="preparing-check" type="checkbox" ${order.preparing ? "checked" : ""}><label>준비 중</label><small>${order.preparing ? `${escapeHtml(order.preparingBy)} · ${formatDate(order.preparingAt)}` : "작업자 미지정"}</small></div></td>
       <td data-label="제품 관리번호"><div class="management-field"><input class="management-number" maxlength="100" placeholder="바코드 스캔" value="${escapeHtml(state.managementDrafts[order.id] ?? order.managementNumber)}"><button class="save-management" type="button">저장</button><small>${order.managementNumberBy ? `${escapeHtml(order.managementNumberBy)} · ${formatDate(order.managementNumberAt)}` : "미등록"}</small></div></td>
       <td data-label="제작 완료"><div class="check-card"><input class="production-check" type="checkbox" ${order.productionDone ? "checked" : ""}><label>제작 완료</label><small>${order.productionDone ? `${escapeHtml(order.productionBy)} · ${formatDate(order.productionAt)}` : "담당자 미지정"}</small></div></td>
-      <td data-label="출고 처리"><div class="check-card"><input class="shipping-check" type="checkbox" ${order.shippingDone ? "checked" : ""}><label>출고 완료</label><small>${order.shippingDone ? `${escapeHtml(order.shippingBy)} · ${formatDate(order.shippingAt)}` : "출고 전"}</small><div class="shipping-fields"><input class="courier" maxlength="100" placeholder="택배사" value="${escapeHtml(order.courier)}"><input class="tracking-number" maxlength="100" placeholder="송장번호" value="${escapeHtml(order.trackingNumber)}"></div>${canCancelOrder(order) ? `<button class="cancel-order" type="button">주문 취소</button>` : ""}</div></td>
+      <td data-label="출고 처리"><div class="check-card"><input class="shipping-check" type="checkbox" ${order.shippingDone ? "checked" : ""}><label>출고 완료</label><small>${order.shippingDone ? `${escapeHtml(order.shippingBy)} · ${formatDate(order.shippingAt)}` : "출고 전"}</small>${canCancelOrder(order) ? `<button class="cancel-order" type="button">주문 취소</button>` : ""}</div></td>
     </tr>`;
   }).join("");
 }
@@ -174,7 +174,7 @@ async function loadOrders() {
 function renderArchivedOrders() {
   const query = $("#archived-search").value.trim().toLowerCase();
   const visible = state.archivedOrders
-    .filter((order) => !query || [order.orderNumber, order.productName, order.optionName, order.recipient, order.phone, order.channel, order.productCode, order.managementNumber, order.trackingNumber].join(" ").toLowerCase().includes(query))
+    .filter((order) => !query || [order.orderNumber, order.productName, order.optionName, order.recipient, order.phone, order.channel, order.productCode, order.managementNumber].join(" ").toLowerCase().includes(query))
     .sort(compareOrders);
   $("#archived-count").textContent = `${visible.length}건`;
   $("#archived-empty").hidden = visible.length > 0;
@@ -186,7 +186,7 @@ function renderArchivedOrders() {
       <td><div class="product-info"><div class="product">${escapeHtml(order.productName)}</div>${details.registeredOption ? `<div class="registered-option"><span>등록옵션명</span><strong>${escapeHtml(details.registeredOption)}</strong></div>` : ""}${details.extras.length ? `<div class="extra-options">${details.extras.map((option) => `<em>${escapeHtml(option)}</em>`).join("")}</div>` : ""}<div class="product-summary"><span>수량 <strong>${order.quantity}개</strong></span><span>결제금액 <strong>${formatAmount(order.amount)}원</strong></span></div></div></td>
       <td><strong>${escapeHtml(order.recipient)}</strong> · ${escapeHtml(order.phone)}<div class="address">${escapeHtml(order.address)}</div><span class="meta">${escapeHtml(order.deliveryMessage)}</span></td>
       <td><strong>${escapeHtml(order.productionBy)}</strong><span class="meta">${formatDate(order.productionAt)}</span><span class="meta">관리번호 ${escapeHtml(order.managementNumber || "-")}</span></td>
-      <td><strong>${escapeHtml(order.shippingBy)}</strong><span class="meta">${formatDate(order.shippingAt)}</span><span class="meta">${escapeHtml(order.courier || "택배사 미등록")}</span></td>
+      <td><strong>${escapeHtml(order.shippingBy)}</strong><span class="meta">${formatDate(order.shippingAt)}</span></td>
     </tr>`;
   }).join("");
 }
@@ -252,7 +252,7 @@ function renderAsHistory() {
         <div><span class="customer-shipment-label">주문 / 출고</span><strong>${escapeHtml(order.orderNumber)}</strong><span class="meta">주문 ${escapeHtml(order.orderedAt)}</span><span class="meta">출고 ${formatDate(order.shippingAt)}</span></div>
         <div><span class="customer-shipment-label">출고 제품</span><strong class="product">${escapeHtml(order.productName)}</strong><span class="meta">${escapeHtml(order.optionName)}</span></div>
         <div><span class="customer-shipment-label">제품 식별</span><span class="management-badge">관리번호 ${escapeHtml(order.managementNumber || "미등록")}</span><span class="meta">상품코드 ${escapeHtml(order.productCode || "-")}</span></div>
-        <div><span class="customer-shipment-label">배송 정보</span><strong>${escapeHtml(order.courier || "택배사 미등록")}</strong><span class="meta">송장 ${escapeHtml(order.trackingNumber || "미등록")}</span><span class="meta">담당 ${escapeHtml(order.shippingBy || "-")}</span></div>
+        <div><span class="customer-shipment-label">출고 처리</span><strong>${escapeHtml(order.shippingBy || "담당자 미등록")}</strong><span class="meta">${formatDate(order.shippingAt)}</span></div>
       </div>`).join("")}</div>
     </article>`;
   }).join("");
@@ -288,10 +288,6 @@ async function cancelOrder(row) {
 async function updateOrder(row, action, checked) {
   try {
     const body = { action, checked, worker: worker() };
-    if (action === "shipping") {
-      body.courier = row.querySelector(".courier").value;
-      body.trackingNumber = row.querySelector(".tracking-number").value;
-    }
     if (action === "managementNumber") body.managementNumber = row.querySelector(".management-number").value;
     const response = await fetch(`/api/orders/${row.dataset.id}`, { method:"PATCH", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body) });
     const result = await response.json();

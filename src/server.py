@@ -460,13 +460,8 @@ class Handler(SimpleHTTPRequestHandler):
                 elif action == "shipping":
                     if checked and not order.get("productionDone"):
                         return self._json(409, {"error": "제작 완료 후 출고 처리할 수 있습니다.", "order": order})
-                    courier = str(payload.get("courier", "")).strip()
-                    tracking_number = str(payload.get("trackingNumber", "")).strip()
-                    if len(courier) > 100 or len(tracking_number) > 100:
-                        return self._json(400, {"error": "택배사와 송장번호는 100자 이내로 입력하세요.", "order": order})
                     order.update({
                         "shippingDone": checked, "shippingBy": worker if checked else "", "shippingAt": now if checked else "",
-                        "courier": courier, "trackingNumber": tracking_number,
                     })
                 else:
                     return self._json(400, {"error": "잘못된 처리 요청입니다."})
@@ -537,8 +532,8 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json(400, {"error": "계정 정보를 확인하세요."})
 
     def _export_shipped(self, archive: bool) -> None:
-        headers = ["번호", "채널", "주문번호", "주문일", "상품명", "옵션", "수량", "상품코드", "제품관리번호", "수령인", "연락처", "우편번호", "주소", "배송메시지", "택배사", "송장번호", "제작담당자", "제작완료일", "출고담당자", "출고완료일"]
-        fields = ["channel", "orderNumber", "orderedAt", "productName", "optionName", "quantity", "productCode", "managementNumber", "recipient", "phone", "postalCode", "address", "deliveryMessage", "courier", "trackingNumber", "productionBy", "productionAt", "shippingBy", "shippingAt"]
+        headers = ["번호", "채널", "주문번호", "주문일", "상품명", "옵션", "수량", "상품코드", "제품관리번호", "수령인", "연락처", "우편번호", "주소", "배송메시지", "제작담당자", "제작완료일", "출고담당자", "출고완료일"]
+        fields = ["channel", "orderNumber", "orderedAt", "productName", "optionName", "quantity", "productCode", "managementNumber", "recipient", "phone", "postalCode", "address", "deliveryMessage", "productionBy", "productionAt", "shippingBy", "shippingAt"]
         with LOCK:
             orders = read_orders()
             new_shipped = [order for order in orders if order.get("shippingDone") and not order.get("archivedAt")]

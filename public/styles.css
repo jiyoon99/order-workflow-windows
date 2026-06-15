@@ -112,7 +112,7 @@ main { max-width: 1680px; margin: auto; padding: 24px 28px 52px; }
 .selected-files { max-width: 300px; color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #search { min-width: 290px; padding-left: 14px; }
 #archived-search, #cancelled-search, #as-history-search { min-width: 290px; padding: 9px 12px; border: 1px solid var(--line-strong); border-radius: 9px; color: var(--ink); background: white; }
-#search, select, .shipping-fields input, .management-field input { padding: 10px 12px; border: 1px solid var(--line-strong); border-radius: 9px; color: var(--ink); background: white; }
+#search, select, .management-field input { padding: 10px 12px; border: 1px solid var(--line-strong); border-radius: 9px; color: var(--ink); background: white; }
 #search:hover, select:hover { border-color: #aebdb3; }
 #message { width: 100%; min-height: 17px; margin: 0; color: var(--green); font-size: 12px; white-space: pre-line; }
 #message.error { color: var(--danger); }
@@ -204,8 +204,6 @@ tr.is-produced:hover td { background: #ddf0e4; }
 .check-card input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--green); cursor: pointer; }
 .check-card label { font-weight: 750; }
 .check-card small { grid-column: 2; color: var(--muted); font-size: 11px; line-height: 1.4; }
-.shipping-fields { grid-column: 1 / -1; display: grid; gap: 6px; margin-top: 7px; }
-.shipping-fields input { width: 100%; min-width: 0; padding: 8px 9px; font-size: 11px; }
 .management-field { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; min-width: 0; }
 .management-field input { min-width: 0; padding: 8px 9px; font-size: 11px; }
 .management-field button { width: 100%; padding: 8px 10px; border: 1px solid #9aada1; border-radius: 8px; color: #315541; background: white; cursor: pointer; font-size: 11px; font-weight: 800; }
