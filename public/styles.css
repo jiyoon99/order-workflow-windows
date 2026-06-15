@@ -216,6 +216,7 @@ tr.is-produced:hover td { background: #ddf0e4; }
 .empty strong { color: #384b40; font-size: 15px; }
 .empty span { margin-top: 3px; font-size: 12px; }
 .archived-orders { overflow: hidden; }
+.archived-orders + .archived-orders { margin-top: 14px; }
 #archived-count, #cancelled-count, #as-history-count { color: var(--muted); font-size: 12px; font-weight: 700; }
 .archived-table { min-width: 1080px; }
 .archived-table th:nth-child(1) { width: 6%; }

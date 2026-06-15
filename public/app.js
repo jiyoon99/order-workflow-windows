@@ -54,21 +54,22 @@ function updateAccessUI() {
   const canManageOrders = orderAdminRoles.has(role);
   const canViewAsHistory = asHistoryRoles.has(role);
   $("#members-tab").toggleAttribute("hidden", !canManageMembers);
-  $("#as-history-tab").toggleAttribute("hidden", !canViewAsHistory);
+  document.querySelectorAll(".as-history-only").forEach((element) => element.toggleAttribute("hidden", !canViewAsHistory));
   $("#upload-form").toggleAttribute("hidden", !canManageOrders);
   $("#export-button").toggleAttribute("hidden", !canManageOrders);
   $("#manual-order").toggleAttribute("hidden", !canManageOrders);
   if (!canManageMembers && !$("#members-view").hidden) showWorkspaceView("orders-view");
-  if (!canViewAsHistory && !$("#as-history-view").hidden) showWorkspaceView("orders-view");
 }
 
 function showWorkspaceView(viewId) {
   document.querySelectorAll(".workspace-view").forEach((view) => { view.hidden = view.id !== viewId; });
   document.querySelectorAll(".workspace-tab").forEach((tab) => { tab.classList.toggle("is-active", tab.dataset.view === viewId); });
   if (viewId === "members-view") loadUsers();
-  if (viewId === "archived-view") loadArchivedOrders();
+  if (viewId === "shipping-customers-view") {
+    loadArchivedOrders();
+    if (asHistoryRoles.has(state.user?.role === "admin" ? "owner" : state.user?.role)) loadAsHistory();
+  }
   if (viewId === "cancelled-view") loadCancelledOrders();
-  if (viewId === "as-history-view") loadAsHistory();
 }
 
 function setAuthMode(mode) {
@@ -173,7 +174,7 @@ async function loadOrders() {
 function renderArchivedOrders() {
   const query = $("#archived-search").value.trim().toLowerCase();
   const visible = state.archivedOrders
-    .filter((order) => !query || [order.orderNumber, order.productName, order.optionName, order.recipient, order.channel, order.productCode].join(" ").toLowerCase().includes(query))
+    .filter((order) => !query || [order.orderNumber, order.productName, order.optionName, order.recipient, order.phone, order.channel, order.productCode, order.managementNumber, order.trackingNumber].join(" ").toLowerCase().includes(query))
     .sort(compareOrders);
   $("#archived-count").textContent = `${visible.length}건`;
   $("#archived-empty").hidden = visible.length > 0;
@@ -259,7 +260,7 @@ function renderAsHistory() {
 
 async function loadAsHistory() {
   const response = await fetch("/api/orders/as-history");
-  if (!response.ok) throw new Error("AS 출고 이력을 불러오지 못했습니다.");
+  if (!response.ok) throw new Error("고객 출고 이력을 불러오지 못했습니다.");
   state.asHistoryOrders = await response.json();
   renderAsHistory();
 }
@@ -490,7 +491,7 @@ $("#export-button").addEventListener("click", async () => {
     link.remove();
     URL.revokeObjectURL(url);
     await loadOrders();
-    showMessage("새 출고 건을 엑셀로 저장하고 완료 주문 보관함으로 이동했습니다. 다음 엑셀에는 다시 포함되지 않습니다.");
+    showMessage("새 출고 건을 엑셀로 저장하고 출고고객조회로 이동했습니다. 다음 엑셀에는 다시 포함되지 않습니다.");
   } catch (error) {
     showMessage(error.message, true);
   } finally {

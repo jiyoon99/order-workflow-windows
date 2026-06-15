@@ -209,7 +209,7 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/orders/as-history":
             user = self._current_user()
             if not user or user_role(user) not in AS_HISTORY_ROLES:
-                return self._json(403, {"error": "AS 출고 이력은 총책임자, 개발자, AS 담당자만 조회할 수 있습니다."})
+                return self._json(403, {"error": "고객 출고 이력은 총책임자, 개발자, AS 담당자만 조회할 수 있습니다."})
             orders = sorted(
                 (item for item in read_orders() if item.get("shippingDone")),
                 key=lambda order: (str(order.get("shippingAt", "")), order_datetime_key(order)),
