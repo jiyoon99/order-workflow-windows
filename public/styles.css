@@ -496,7 +496,7 @@ body[data-theme="dark"] .channel-filter--phone:not(.is-active) { color: #6b4c85 
 body[data-theme="dark"] .channel-filter--visit:not(.is-active) { color: #15643e !important; border-color: #c8e2d2 !important; background: #eef8f1 !important; }
 body[data-theme="dark"] th { color: #9fb0a8; border-bottom-color: rgba(137, 156, 148, .22); background: linear-gradient(180deg, rgba(12, 19, 16, .98) 0, rgba(15, 24, 20, .98) 100%); }
 body[data-theme="dark"] td { color: #e8efe9; border-top-color: rgba(137, 156, 148, .18); background: #0c1511; }
-body[data-theme="dark"] td + td { border-left-color: #e5ebe7; }
+body[data-theme="dark"] td + td { border-left-color: rgba(137, 156, 148, .18); }
 body[data-theme="dark"] tbody tr:hover td { background: #101b16; }
 body[data-theme="dark"] tr.is-preparing td { background: #241f0c; }
 body[data-theme="dark"] tr.is-preparing:hover td { background: #2d2610; }
@@ -522,6 +522,17 @@ body[data-theme="dark"] .manual-order-check .check-card { border-color: rgba(137
 body[data-theme="dark"] .empty { color: #a7b8af; }
 body[data-theme="dark"] .empty::before { border-color: #51645b; background: linear-gradient(#718179,#718179) 12px 17px / 28px 2px no-repeat, linear-gradient(#718179,#718179) 12px 27px / 22px 2px no-repeat, linear-gradient(#718179,#718179) 12px 37px / 27px 2px no-repeat, #111d18; box-shadow: 7px 7px 0 #0b1410; }
 body[data-theme="dark"] .empty strong { color: #e8efe9; }
+body[data-theme="dark"] .archived-orders .table-wrap {
+  background: #0c1511;
+}
+body[data-theme="dark"] .archived-orders table,
+body[data-theme="dark"] .archived-orders tbody,
+body[data-theme="dark"] .archived-orders .empty {
+  background: #0c1511;
+}
+body[data-theme="dark"] .archived-orders .empty {
+  border-top: 1px solid rgba(137, 156, 148, .18);
+}
 body[data-theme="dark"] .cancelled-table td:last-child { color: #f0b2a8; }
 body[data-theme="dark"] .customer-card { border-color: rgba(137, 156, 148, .18); background: linear-gradient(180deg, rgba(16, 24, 20, .96), rgba(12, 19, 16, .96)); }
 body[data-theme="dark"] .customer-card-header { color: #eef6f1; background: linear-gradient(180deg, rgba(26, 42, 34, .95) 0, rgba(18, 27, 23, .95) 100%); }
