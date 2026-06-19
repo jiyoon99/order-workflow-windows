@@ -3,89 +3,115 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>하프북 주문 작업실</title>
-  <link rel="stylesheet" href="/styles.css?v=20260615-3">
+  <title>하프북 주문 작업장</title>
+  <link rel="stylesheet" href="/styles.css?v=20260618-24">
 </head>
 <body>
   <header class="topbar">
-    <button id="home-button" class="brand-lockup" type="button" aria-label="주문 작업실 처음 화면으로 이동">
+    <button id="home-button" class="brand-lockup" type="button" aria-label="주문 작업장 처음 화면으로 이동">
       <div class="brand-mark" aria-hidden="true">H</div>
       <div>
         <p class="eyebrow">HALFBOOK OPERATIONS</p>
-        <h1>하프북 주문 작업실</h1>
+        <h1>하프북 주문 작업장</h1>
         <p class="subtitle">주문 수집부터 제작·출고까지 한 곳에서 관리합니다.</p>
       </div>
     </button>
-    <div class="account-box"><span>로그인 사용자</span><strong id="current-user">-</strong><button id="logout-button" type="button">로그아웃</button></div>
+    <div class="account-box">
+      <span>로그인 사용자</span>
+      <strong id="current-user">-</strong>
+      <div class="account-actions">
+        <button id="theme-toggle" class="theme-toggle" type="button">다크 모드</button>
+        <button id="logout-button" type="button">로그아웃</button>
+      </div>
+    </div>
   </header>
 
   <main>
-    <nav class="workspace-tabs" aria-label="작업실 메뉴">
-      <button class="workspace-tab is-active" data-view="orders-view" type="button">주문 작업실</button>
+    <nav class="workspace-tabs" aria-label="작업장 메뉴">
+      <button class="workspace-tab is-active" data-view="orders-view" type="button">주문 작업장</button>
       <button class="workspace-tab" data-view="shipping-customers-view" type="button">출고고객조회</button>
       <button class="workspace-tab" data-view="cancelled-view" type="button">취소 주문</button>
       <button id="members-tab" class="workspace-tab" data-view="members-view" type="button" hidden>회원 관리</button>
     </nav>
 
     <section id="orders-view" class="workspace-view">
-    <section class="toolbar panel">
-      <form id="upload-form" class="admin-only" hidden>
-        <label class="file-button">엑셀/ZIP 선택<input id="files" name="files" type="file" accept=".xlsx,.xls,.zip" multiple required></label>
-        <button id="import-button" type="submit" class="primary" disabled>주문 가져오기</button>
-        <span id="selected-files" class="selected-files">선택된 파일 없음</span>
-      </form>
-      <div class="toolbar-actions">
-        <input id="search" type="search" placeholder="주문번호, 상품, 수령인 검색">
-        <select id="status-filter" aria-label="상태 필터">
-          <option value="all">전체 상태</option>
-          <option value="waiting">제작 대기</option>
-          <option value="preparing">준비 중</option>
-          <option value="produced">제작 완료</option>
-          <option value="shipped">출고 완료</option>
-        </select>
-        <button id="export-button" class="export-button admin-only" type="button" hidden>금일 출고 완료 엑셀</button>
-      </div>
-      <p id="message" role="status"></p>
-    </section>
+      <section class="toolbar panel">
+        <form id="upload-form" class="admin-only" hidden>
+          <label class="file-button">엑셀/ZIP 선택<input id="files" name="files" type="file" accept=".xlsx,.xls,.zip" multiple required></label>
+          <button id="import-button" type="submit" class="primary" disabled>주문 가져오기</button>
+          <span id="selected-files" class="selected-files">선택된 파일 없음</span>
+        </form>
+        <div class="toolbar-actions">
+          <input id="search" type="search" placeholder="주문번호, 상품, 수령인 검색">
+          <select id="status-filter" aria-label="상태 필터">
+            <option value="all">전체 상태</option>
+            <option value="waiting">제작 대기</option>
+            <option value="preparing">준비 중</option>
+            <option value="produced">제작 완료</option>
+            <option value="softwareInspection">SW 검수</option>
+            <option value="shipped">출고 확인</option>
+          </select>
+          <button id="export-button" class="export-button admin-only" type="button" hidden>금일 출고 확인 엑셀</button>
+        </div>
+        <p id="message" role="status"></p>
+      </section>
 
-    <details id="manual-order" class="manual-order panel admin-only" hidden>
-      <summary>수기 주문 등록</summary>
-      <form id="manual-order-form">
-        <label>주문번호<input name="orderNumber" required placeholder="예: TEL-20260611-001"></label>
-        <label>주문일<input name="orderedAt" type="datetime-local"></label>
-        <label class="wide">상품명<input name="productName" required></label>
-        <label>옵션<input name="optionName"></label>
-        <label>상품코드<input name="productCode"></label>
-        <label>수량<input name="quantity" type="number" min="1" value="1" required></label>
-        <label>결제금액<input name="amount" type="number" min="0" value="0"></label>
-        <label>수령인<input name="recipient" required></label>
-        <label>연락처<input name="phone" required></label>
-        <label>우편번호<input name="postalCode"></label>
-        <label class="wide">주소<input name="address"></label>
-        <label class="wide">배송메시지<input name="deliveryMessage"></label>
-        <button class="primary" type="submit">주문 목록에 등록</button>
-      </form>
-      <p id="manual-message" role="status"></p>
-    </details>
+      <details id="manual-order" class="manual-order panel admin-only" hidden>
+        <summary id="manual-order-summary">수기 주문 등록</summary>
+        <form id="manual-order-form">
+          <input id="manual-order-id" name="editOrderId" type="hidden" value="">
+          <label>주문번호<input name="orderNumber" placeholder="예: TEL-20260611-001"></label>
+          <label>채널
+            <select name="channel">
+              <option value="b2b">b2b</option>
+              <option value="b2c">b2c</option>
+              <option value="전화" selected>전화</option>
+              <option value="방문">방문</option>
+            </select>
+          </label>
+          <label>주문일<input name="orderedAt" type="datetime-local"></label>
+          <label class="wide">상품명<input name="productName"></label>
+          <label>옵션<input name="optionName"></label>
+          <label>상품코드<input name="productCode"></label>
+          <label>수량<input name="quantity" type="number" min="1" value="1"></label>
+          <label>결제금액<input name="amount" type="number" min="0" value="0"></label>
+          <label>수령인<input name="recipient"></label>
+          <label>연락처<input name="phone"></label>
+          <label>우편번호<input name="postalCode"></label>
+          <label class="wide">주소<input name="address"></label>
+          <label class="wide">배송메시지<input name="deliveryMessage"></label>
+          <label class="wide manual-order-check">
+            <span>SW 검수</span>
+            <div class="check-card check-card--inspection">
+              <input name="softwareInspectionDone" type="checkbox">
+              <span>SW 검수 완료</span>
+              <small>수기 주문 등록 시 바로 검수 완료로 표시</small>
+            </div>
+          </label>
+          <button id="manual-order-submit" class="primary" type="submit">주문 목록에 등록</button>
+        </form>
+        <p id="manual-message" role="status"></p>
+      </details>
 
-    <section class="stats" aria-label="주문 현황 및 상태 필터">
-      <button class="stat-card is-active" type="button" data-status="all" aria-pressed="true"><span>전체 주문</span><strong id="total-count">0</strong></button>
-      <button class="stat-card" type="button" data-status="waiting" aria-pressed="false"><span>제작 대기</span><strong id="waiting-count">0</strong></button>
-      <button class="stat-card preparing-stat" type="button" data-status="preparing" aria-pressed="false"><span>준비 중</span><strong id="preparing-count">0</strong></button>
-      <button class="stat-card" type="button" data-status="produced" aria-pressed="false"><span>제작 완료</span><strong id="produced-count">0</strong></button>
-      <button class="stat-card accent" type="button" data-status="shipped" aria-pressed="false"><span>출고 완료</span><strong id="shipped-count">0</strong></button>
-    </section>
+      <section class="stats" aria-label="주문 현황 및 상태 필터">
+        <button class="stat-card is-active" type="button" data-status="all" aria-pressed="true"><span>전체 주문</span><strong id="total-count">0</strong></button>
+        <button class="stat-card" type="button" data-status="waiting" aria-pressed="false"><span>제작 대기</span><strong id="waiting-count">0</strong></button>
+        <button class="stat-card preparing-stat" type="button" data-status="preparing" aria-pressed="false"><span>준비 중</span><strong id="preparing-count">0</strong></button>
+        <button class="stat-card" type="button" data-status="produced" aria-pressed="false"><span>제작 완료</span><strong id="produced-count">0</strong></button>
+        <button class="stat-card inspection-stat" type="button" data-status="softwareInspection" aria-pressed="false"><span>SW 검수</span><strong id="inspection-count">0</strong></button>
+        <button class="stat-card accent" type="button" data-status="shipped" aria-pressed="false"><span>출고 확인</span><strong id="shipped-count">0</strong></button>
+      </section>
 
-    <section class="orders panel">
-      <div class="section-heading"><div class="order-heading-controls"><h2>주문 목록</h2><div id="channel-filter" class="channel-filter" aria-label="구매 사이트 필터"></div></div><span id="visible-count"></span></div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>채널 / 주문</th><th>상품 정보</th><th>배송지</th><th>준비 중</th><th>제품 관리번호</th><th>제작 완료</th><th>출고 처리</th></tr></thead>
-          <tbody id="orders-body"></tbody>
-        </table>
-        <div id="empty" class="empty"><strong>표시할 주문이 없습니다</strong><span>검색 조건을 변경하거나 주문 엑셀을 가져오세요.</span></div>
-      </div>
-    </section>
+      <section class="orders panel">
+        <div class="section-heading"><div class="order-heading-controls"><h2>주문 목록</h2><div id="channel-filter" class="channel-filter" aria-label="구매 사이트 필터"></div></div><span id="visible-count"></span></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>채널 / 주문</th><th>상품 정보</th><th>배송지</th><th>준비 중</th><th>제품 관리번호</th><th>제작 완료</th><th>SW 검수</th><th>출고 처리</th></tr></thead>
+            <tbody id="orders-body"></tbody>
+          </table>
+          <div id="empty" class="empty"><strong>표시할 주문이 없습니다</strong><span>검색 조건을 변경하거나 주문 엑셀을 가져오세요.</span></div>
+        </div>
+      </section>
     </section>
 
     <section id="shipping-customers-view" class="workspace-view" hidden>
@@ -100,15 +126,15 @@
 
       <section class="orders panel archived-orders">
         <div class="section-heading">
-          <div class="order-heading-controls"><h2>출고 완료 주문</h2><input id="archived-search" type="search" placeholder="주문번호, 상품, 고객 이름, 연락처 검색"></div>
+          <div class="order-heading-controls"><h2>출고 확인 주문</h2><input id="archived-search" type="search" placeholder="주문번호, 상품, 고객 이름, 연락처 검색"></div>
           <span id="archived-count">0건</span>
         </div>
         <div class="table-wrap">
           <table class="archived-table">
-            <thead><tr><th>번호</th><th>채널 / 주문</th><th>상품 정보</th><th>수령인 / 배송지</th><th>제작 완료</th><th>출고 완료</th></tr></thead>
+            <thead><tr><th>번호</th><th>채널 / 주문</th><th>상품 정보</th><th>수령인 / 배송지</th><th>제작 완료</th><th>출고 확인</th></tr></thead>
             <tbody id="archived-orders-body"></tbody>
           </table>
-          <div id="archived-empty" class="empty"><strong>출고 완료 주문이 없습니다</strong><span>출고 엑셀로 보관 처리된 주문이 여기에 표시됩니다.</span></div>
+          <div id="archived-empty" class="empty"><strong>출고 확인 주문이 없습니다</strong><span>출고 엑셀로 보관 처리된 주문이 여기에 표시됩니다.</span></div>
         </div>
       </section>
     </section>
@@ -146,10 +172,11 @@
       </section>
     </section>
   </main>
+
   <div id="auth-screen" class="auth-screen">
     <form id="auth-form" class="auth-card">
       <p class="eyebrow dark">HALFBOOK</p>
-      <h2 id="auth-title">작업자 로그인</h2>
+      <h2 id="auth-title">작업장 로그인</h2>
       <p id="auth-help">계정으로 로그인하면 작업 기록에 이름이 자동 저장됩니다.</p>
       <div id="auth-tabs" class="auth-tabs">
         <button class="is-active" data-auth-mode="login" type="button">로그인</button>
@@ -162,6 +189,6 @@
       <p id="auth-message" role="status"></p>
     </form>
   </div>
-  <script type="module" src="/app.js?v=20260615-10"></script>
+  <script type="module" src="/app.js?v=20260618-24"></script>
 </body>
 </html>

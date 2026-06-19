@@ -16,6 +16,53 @@ def _first(row: dict[str, str], *keys: str) -> str:
     return ""
 
 
+def _ordered_at(row: dict[str, str]) -> str:
+    # 채널마다 주문일 컬럼명이 달라서, 가장 흔한 헤더부터 순서대로 찾는다.
+    return _first(
+        row,
+        "주문일시",
+        "주문일",
+        "주문 시간",
+        "주문시간",
+        "주문일자",
+        "결제일시",
+        "결제일",
+        "등록일시",
+        "등록일",
+        "접수일시",
+        "접수일",
+    )
+
+
+def _address(row: dict[str, str]) -> str:
+    # 배송지 주소는 본주소와 상세주소가 분리되는 경우가 많아서 합칠 수 있으면 합친다.
+    address = _first(
+        row,
+        "배송지주소",
+        "배송지 주소",
+        "배송주소",
+        "배송 주소",
+        "배송지",
+        "주소",
+        "기본주소",
+        "도로명주소",
+        "전체주소",
+        "수취인 주소",
+        "수취인주소",
+    )
+    detail = _first(
+        row,
+        "상세주소",
+        "상세 주소",
+        "나머지 주소",
+        "나머지주소",
+        "수취인 나머지 주소",
+    )
+    if address and detail and detail not in address:
+        return f"{address} {detail}".strip()
+    return address or detail
+
+
 def _number(value: str, fallback: int = 0) -> int:
     try:
         cleaned = re.sub(r"[^0-9.-]", "", str(value).replace(",", ""))
@@ -25,6 +72,7 @@ def _number(value: str, fallback: int = 0) -> int:
 
 
 def _collected_orders(rows: list[dict[str, str]], source_file: str) -> list[dict]:
+    # 주문수집 파일은 한 주문이 여러 줄로 나뉠 수 있어서, 시작 행 기준으로 묶는다.
     groups: list[list[dict[str, str]]] = []
     for row in rows:
         starts_order = bool(_first(row, "주문일시", "수취인 이름"))
@@ -52,16 +100,16 @@ def _collected_orders(rows: list[dict[str, str]], source_file: str) -> list[dict
             "channel": _first(first, "플랫폼") or "기타",
             "sourceFile": source_file,
             "orderNumber": order_number,
-            "orderedAt": _first(first, "주문일시"),
+            "orderedAt": _ordered_at(first),
             "productName": product_name,
             "optionName": option_name,
             "productCode": registered_option,
             "quantity": _number(_first(first, "수량"), 1),
-            "amount": _number(_first(first, "총 상품결제금액")),
+                        "amount": _number(_first(first, "총 상품결제금액")),
             "recipient": _first(first, "수취인 이름"),
-            "phone": "",
-            "postalCode": "",
-            "address": "",
+            "phone": _first(first, "연락처", "수령인 연락처", "수취인 연락처"),
+            "postalCode": _first(first, "우편번호", "배송지우편번호", "배송지 우편번호"),
+            "address": _first(first, "주소", "배송지주소", "배송지 주소", "배송주소", "기본주소") or _address(first),
             "deliveryMessage": _first(first, "배송메세지", "배송메시지"),
             "courier": "",
             "trackingNumber": "",
@@ -74,11 +122,11 @@ def _kakao(row: dict[str, str], source_file: str) -> dict:
     return {
         "importKey": f"카카오:{order_number}:{_first(row, '채널상품번호', '판매자상품번호')}:{_first(row, '옵션')}",
         "channel": "카카오", "sourceFile": source_file, "orderNumber": order_number,
-        "orderedAt": _first(row, "주문일", "주문일시", "결제일시"), "productName": _first(row, "상품명", "주문상품명"),
+        "orderedAt": _ordered_at(row), "productName": _first(row, "상품명", "주문상품명"),
         "optionName": _first(row, "옵션", "옵션명"), "productCode": _first(row, "판매자상품번호", "채널상품번호", "상품코드"),
         "quantity": _number(_first(row, "수량", "주문수량"), 1), "amount": _number(_first(row, "정산기준금액", "상품금액", "결제금액")),
         "recipient": _first(row, "수령인명", "수령인", "받는분"), "phone": _first(row, "하이픈포함 수령인연락처1", "수령인연락처1", "수령인연락처", "연락처"),
-        "postalCode": _first(row, "우편번호", "배송지우편번호"), "address": _first(row, "배송지주소", "주소", "배송주소"),
+        "postalCode": _first(row, "우편번호", "배송지우편번호"), "address": _address(row),
         "deliveryMessage": _first(row, "배송메세지", "배송메시지"), "courier": _first(row, "택배사코드", "택배사"),
         "trackingNumber": _first(row, "송장번호"),
     }
@@ -89,11 +137,11 @@ def _coupang(row: dict[str, str], source_file: str) -> dict:
     return {
         "importKey": f"쿠팡:{order_number}:{_first(row, '옵션ID', '노출상품ID')}",
         "channel": "쿠팡", "sourceFile": source_file, "orderNumber": order_number,
-        "orderedAt": _first(row, "주문일", "주문일시"), "productName": _first(row, "등록상품명", "노출상품명(옵션명)", "상품명"),
+        "orderedAt": _ordered_at(row), "productName": _first(row, "등록상품명", "노출상품명(옵션명)", "상품명"),
         "optionName": _first(row, "등록옵션명", "옵션명", "옵션"), "productCode": _first(row, "업체상품코드", "옵션ID", "노출상품ID", "상품코드"),
         "quantity": _number(_first(row, "구매수(수량)", "수량", "주문수량"), 1), "amount": _number(_first(row, "결제액", "결제금액", "상품금액")),
         "recipient": _first(row, "수취인이름", "수령인", "받는분"), "phone": _first(row, "수취인전화번호", "연락처", "수령인연락처"),
-        "postalCode": _first(row, "우편번호", "배송지우편번호"), "address": _first(row, "수취인 주소", "주소", "배송주소"),
+        "postalCode": _first(row, "우편번호", "배송지우편번호"), "address": _address(row),
         "deliveryMessage": _first(row, "배송메세지", "배송메시지"), "courier": _first(row, "택배사"),
         "trackingNumber": _first(row, "운송장번호"),
     }
@@ -107,7 +155,7 @@ def _godomall(row: dict[str, str], source_file: str) -> dict:
     return {
         "importKey": f"고도몰:{order_number}:{_first(row, '상품주문번호', '주문코드(순서)')}:{_first(row, '상품코드')}",
         "channel": "고도몰", "sourceFile": source_file, "orderNumber": order_number,
-        "orderedAt": _first(row, "주문일자"), "productName": _first(row, "상품명", "주문 상품명"),
+        "orderedAt": _ordered_at(row), "productName": _first(row, "상품명", "주문 상품명"),
         "optionName": _first(row, "옵션정보", "텍스트옵션정보"), "productCode": _first(row, "자체상품코드", "상품코드"),
         "quantity": _number(_first(row, "상품수량"), 1), "amount": _number(_first(row, "판매가", "총 결제 금액")),
         "recipient": _first(row, "수취인 이름"), "phone": _first(row, "수취인 핸드폰 번호", "수취인 전화번호"),
@@ -145,6 +193,7 @@ def _godomall_orders(rows: list[dict[str, str]], source_file: str) -> list[dict]
 
 
 def import_workbook(content: bytes, source_file: str) -> list[dict]:
+    # 헤더 조합을 보고 채널별 파서를 고른다. 새 포맷이 오면 여기서 분기 추가가 필요하다.
     rows = read_first_sheet(content, source_file)
     if not rows:
         raise ValueError("엑셀에 주문 데이터가 없습니다.")
@@ -175,6 +224,7 @@ def import_workbook(content: bytes, source_file: str) -> list[dict]:
             "id": str(uuid4()), "managementNumber": "",
             "preparing": False, "preparingBy": "", "preparingAt": "",
             "productionDone": False, "productionBy": "", "productionAt": "",
+            "softwareInspectionDone": False, "softwareInspectionBy": "", "softwareInspectionAt": "",
             "shippingDone": False, "shippingBy": "", "shippingAt": "", "createdAt": now, "updatedAt": now,
         })
         orders.append(order)

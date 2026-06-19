@@ -115,6 +115,16 @@ class ImporterTests(unittest.TestCase):
         self.assertEqual(orders[0]["recipient"], "홍길동")
         self.assertEqual(orders[0]["quantity"], 2)
 
+    def test_imports_orders_with_alternate_date_and_address_headers(self):
+        content = write_xlsx(
+            ["주문번호", "주문일자", "상품명", "옵션명", "수량", "수령인", "배송지 주소", "상세주소"],
+            [["ALT-1", "2026-06-16 09:30", "테스트 상품", "기본", "1", "홍길동", "서울특별시 중구", "세종대로 1"]],
+        )
+        orders = import_workbook(content, "alt-channel.xlsx")
+        self.assertEqual(len(orders), 1)
+        self.assertEqual(orders[0]["orderedAt"], "2026-06-16 09:30")
+        self.assertEqual(orders[0]["address"], "서울특별시 중구 세종대로 1")
+
     def test_imports_collected_order_workbook(self):
         if os.getenv("RUN_EXTERNAL_SAMPLE_TESTS") != "1":
             self.skipTest("RUN_EXTERNAL_SAMPLE_TESTS=1일 때 실행합니다.")

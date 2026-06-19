@@ -32,7 +32,10 @@ AUDIT_LOCK = threading.Lock()
 SETUP_LOCK = threading.Lock()
 AUTH = AuthStore(USERS_FILE)
 MEMBER_MANAGEMENT_ROLES = {"owner", "developer"}
+# 주문 취소는 운영 책임자에게도 열어두되, 일반 작업자에는 열지 않는다.
+CANCEL_ORDER_ROLES = {"owner", "developer", "as_manager", "sales_manager", "md"}
 ORDER_ADMIN_ROLES = {"owner", "developer", "sales_manager", "md"}
+ORDER_EDIT_ROLES = {"owner", "developer", "as_manager", "sales_manager", "md"}
 AS_HISTORY_ROLES = {"owner", "developer", "as_manager"}
 ROLE_RANK = {"owner": 0, "developer": 1, "as_manager": 2, "sales_manager": 3, "md": 4, "worker": 5}
 MAX_UPLOAD_BYTES = 30 * 1024 * 1024
@@ -47,7 +50,7 @@ LOGIN_FAILURES: dict[str, list[float]] = {}
 
 
 class OrderHTTPServer(ThreadingHTTPServer):
-    allow_reuse_address = True
+    allow_reuse_address = False
     daemon_threads = True
     request_queue_size = 64
 
@@ -56,14 +59,19 @@ def user_role(user: dict) -> str:
     return normalize_role(str(user.get("role", "worker")))
 
 
+def split_management_numbers(value: object) -> list[str]:
+    return [line.strip() for line in str(value or "").splitlines() if line.strip()]
+
+
 def read_orders() -> list[dict]:
     try:
-        return json.loads(DATA_FILE.read_text(encoding="utf-8"))
+        return json.loads(DATA_FILE.read_text(encoding="utf-8-sig"))
     except FileNotFoundError:
         return []
 
 
 def backup_file(file_path: Path) -> None:
+    # 하루에 한 번만 백업을 남기고, 오래된 백업은 자동으로 정리한다.
     if not file_path.exists():
         return
     backup_dir = file_path.parent / "backups"
@@ -81,6 +89,7 @@ def backup_file(file_path: Path) -> None:
 
 
 def write_audit(event: str, user: dict | None = None, **details: object) -> None:
+    # 감사 로그는 JSONL로 누적해서 남긴다.
     record = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "event": event,
@@ -101,6 +110,7 @@ def login_key(client_ip: str, username: str) -> str:
 
 
 def login_blocked(key: str, now: float | None = None) -> bool:
+    # 같은 계정/주소 조합의 연속 실패를 시간창 기준으로 계산한다.
     current = now if now is not None else time.time()
     with LOGIN_LOCK:
         failures = [item for item in LOGIN_FAILURES.get(key, []) if current - item < LOGIN_BLOCK_SECONDS]
@@ -109,6 +119,7 @@ def login_blocked(key: str, now: float | None = None) -> bool:
 
 
 def record_login_result(key: str, success: bool, now: float | None = None) -> None:
+    # 성공 시 실패 이력을 비우고, 실패 시에는 카운트를 적립한다.
     with LOGIN_LOCK:
         if success:
             LOGIN_FAILURES.pop(key, None)
@@ -116,19 +127,111 @@ def record_login_result(key: str, success: bool, now: float | None = None) -> No
             LOGIN_FAILURES.setdefault(key, []).append(now if now is not None else time.time())
 
 
-def new_unique_orders(existing: list[dict], imported: list[dict]) -> list[dict]:
+def _normalized_order_value(value: object) -> str:
+    return re.sub(r"\s+", " ", str(value or "")).strip().casefold()
+
+
+def _normalized_address_value(value: object) -> str:
+    text = _normalized_order_value(value)
+    return re.sub(r"[,\.\-_/()]+", "", text)
+
+
+def _normalized_phone_value(value: object) -> str:
+    return re.sub(r"\D+", "", str(value or ""))
+
+
+def _normalized_order_number(value: object) -> str:
+    return _normalized_order_value(value)
+
+
+def order_fingerprint(order: dict) -> tuple[str, ...]:
+    return (
+        _normalized_order_value(order.get("recipient")),
+        _normalized_order_value(order.get("productName")),
+        _normalized_order_value(order.get("optionName")),
+        _normalized_address_value(order.get("address")),
+    )
+
+
+def order_dedupe_key(order: dict) -> tuple[str, ...]:
+    order_number = _normalized_order_number(order.get("orderNumber"))
+    if order_number:
+        return ("orderNumber", order_number)
+    fingerprint = order_fingerprint(order)
+    phone = _normalized_phone_value(order.get("phone"))
+    if all(fingerprint) and phone:
+        return ("fingerprint", *fingerprint, phone)
+    if all(fingerprint):
+        return ("fingerprint", *fingerprint)
+    return ("importKey", _normalized_order_value(order.get("importKey")))
+
+
+SHIPPING_UPDATE_FIELDS = ("recipient", "phone", "postalCode", "address", "deliveryMessage")
+
+
+def shipping_update_candidate(existing: dict, imported: dict, now: str) -> dict | None:
+    current = {field: str(existing.get(field, "")).strip() for field in SHIPPING_UPDATE_FIELDS}
+    incoming = {field: str(imported.get(field, "")).strip() for field in SHIPPING_UPDATE_FIELDS}
+    changed = {
+        field: {"current": current[field], "incoming": incoming[field]}
+        for field in SHIPPING_UPDATE_FIELDS
+        if incoming[field] and incoming[field] != current[field]
+    }
+    if not changed:
+        return None
+    candidate = {
+        "detectedAt": now,
+        "sourceFile": imported.get("sourceFile", ""),
+        "orderNumber": imported.get("orderNumber", ""),
+        "fields": {field: incoming[field] for field in SHIPPING_UPDATE_FIELDS},
+        "changed": changed,
+    }
+    product_changed = any(
+        str(imported.get(field, "")).strip() and str(imported.get(field, "")).strip() != str(existing.get(field, "")).strip()
+        for field in ("productName", "optionName", "quantity")
+    )
+    if product_changed:
+        candidate["contentChangeWarning"] = True
+    return candidate
+
+
+def new_unique_orders(existing: list[dict], imported: list[dict], now: str | None = None) -> tuple[list[dict], int]:
+    # 저장된 주문 전체를 기준으로 본다. 출고 완료/보관 주문도 같은 기준에 포함된다.
+    detected_at = now or datetime.now(timezone.utc).isoformat()
     keys = {order["importKey"] for order in existing}
+    fingerprints = {order_dedupe_key(order) for order in existing}
+    by_order_number = {
+        _normalized_order_number(order.get("orderNumber")): order
+        for order in existing
+        if _normalized_order_number(order.get("orderNumber"))
+    }
     added = []
+    shipping_updates = 0
     for order in imported:
         key = order["importKey"]
-        if key in keys:
+        fingerprint = order_dedupe_key(order)
+        order_number = _normalized_order_number(order.get("orderNumber"))
+        matched = by_order_number.get(order_number) if order_number else None
+        if matched:
+            if not matched.get("archivedAt") and not matched.get("cancelledAt") and not matched.get("shippingDone"):
+                candidate = shipping_update_candidate(matched, order, detected_at)
+                if candidate:
+                    matched["pendingShippingUpdate"] = candidate
+                    matched["updatedAt"] = detected_at
+                    shipping_updates += 1
+            continue
+        if key in keys or fingerprint in fingerprints:
             continue
         keys.add(key)
+        fingerprints.add(fingerprint)
+        if order_number:
+            by_order_number[order_number] = order
         added.append(order)
-    return added
+    return added, shipping_updates
 
 
 def write_orders(orders: list[dict]) -> None:
+    # 임시 파일에 먼저 쓰고 원자적으로 교체해서 저장 중 손상을 줄인다.
     DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
     os.chmod(DATA_FILE.parent, 0o700)
     backup_file(DATA_FILE)
@@ -147,6 +250,7 @@ def shutdown_backup_dir() -> Path:
 
 
 def write_shutdown_backup() -> None:
+    # 종료 시점의 주문/사용자/감사 로그를 묶어서 보관한다.
     sources = [DATA_FILE, USERS_FILE, AUDIT_FILE]
     existing_sources = [source for source in sources if source.exists()]
     if not existing_sources:
@@ -167,8 +271,10 @@ def write_shutdown_backup() -> None:
 
 
 def serve() -> None:
+    # 운영 환경에서는 0.0.0.0 바인딩으로 외부 접속을 허용한다.
     port = int(os.getenv("PORT", "3000"))
-    httpd = OrderHTTPServer(("0.0.0.0", port), Handler)
+    host = os.getenv("HOST", "0.0.0.0")
+    httpd = OrderHTTPServer((host, port), Handler)
     stopped = threading.Event()
 
     def stop_server(signum: int, frame: object | None) -> None:
@@ -184,7 +290,7 @@ def serve() -> None:
         previous_handlers[signum] = signal.getsignal(signum)
         signal.signal(signum, stop_server)
 
-    print(f"Order workflow sample: http://localhost:{port}")
+    print(f"Order workflow sample: http://{host}:{port}")
     server_thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     server_thread.start()
     try:
@@ -219,6 +325,7 @@ def order_number_key(order: dict) -> list[tuple[int, object]]:
 
 
 def order_datetime_key(order: dict) -> tuple[str, str]:
+    # 주문일시가 다양한 형식으로 들어와도 정렬 가능한 문자열로 정규화한다.
     ordered_at = str(order.get("orderedAt", "")).strip().replace("/", "-").replace(".", "-")
     ordered_at = re.sub(r"\s+", " ", ordered_at)
     digits = re.sub(r"\D", "", ordered_at)
@@ -294,7 +401,7 @@ class Handler(SimpleHTTPRequestHandler):
             if not user or user_role(user) not in AS_HISTORY_ROLES:
                 return self._json(403, {"error": "고객 출고 이력은 총책임자, 개발자, AS 담당자만 조회할 수 있습니다."})
             orders = sorted(
-                (item for item in read_orders() if item.get("shippingDone")),
+                (item for item in read_orders() if item.get("shippingDone") and not item.get("cancelledAt")),
                 key=lambda order: (str(order.get("shippingAt", "")), order_datetime_key(order)),
             )
             return self._json(200, orders)
@@ -396,11 +503,12 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json(400, {"error": "\n".join(errors)})
             with LOCK:
                 orders = read_orders()
-                added = new_unique_orders(orders, imported)
+                now = datetime.now(timezone.utc).isoformat()
+                added, shipping_updates = new_unique_orders(orders, imported, now)
                 orders.extend(added)
                 write_orders(orders)
-            write_audit("orders_imported", user, added=len(added), duplicates=len(imported) - len(added), files=len(files))
-            return self._json(200, {"added": len(added), "duplicates": len(imported) - len(added), "errors": errors})
+            write_audit("orders_imported", user, added=len(added), duplicates=len(imported) - len(added), shippingUpdates=shipping_updates, files=len(files))
+            return self._json(200, {"added": len(added), "duplicates": len(imported) - len(added), "shippingUpdates": shipping_updates, "errors": errors})
         except ValueError as error:
             return self._json(400, {"error": str(error)})
         except Exception:
@@ -424,25 +532,29 @@ class Handler(SimpleHTTPRequestHandler):
     def _create_manual_order(self, user: dict) -> None:
         try:
             payload = json.loads(self._body())
-            order_number = str(payload.get("orderNumber", "")).strip()
+            order_number = str(payload.get("orderNumber", "")).strip() or f"수기-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid4().hex[:6]}"
             product_name = str(payload.get("productName", "")).strip()
             recipient = str(payload.get("recipient", "")).strip()
             phone = str(payload.get("phone", "")).strip()
+            channel = str(payload.get("channel", "전화")).strip() or "전화"
             worker = user["displayName"]
-            if not all((order_number, product_name, recipient, phone, worker)):
-                return self._json(400, {"error": "주문번호, 상품명, 수령인, 연락처, 작업자를 입력하세요."})
+            if not worker:
+                return self._json(400, {"error": "작업자를 확인할 수 없습니다."})
             try:
                 quantity = max(1, int(payload.get("quantity") or 1))
                 amount = max(0, int(payload.get("amount") or 0))
             except (TypeError, ValueError):
                 return self._json(400, {"error": "수량과 금액은 숫자로 입력하세요."})
+            software_inspection_done = bool(payload.get("softwareInspectionDone"))
+            if software_inspection_done:
+                return self._json(409, {"error": "제작 완료 후 소프트웨어 검수를 완료할 수 있습니다."})
             now = datetime.now(timezone.utc).isoformat()
             with LOCK:
                 orders = read_orders()
                 if any(str(order.get("orderNumber", "")).strip() == order_number for order in orders):
                     return self._json(409, {"error": "이미 등록된 주문번호입니다."})
                 order = {
-                    "id": str(uuid4()), "importKey": f"전화주문:{order_number}", "channel": "전화주문",
+                    "id": str(uuid4()), "importKey": f"{channel}:{order_number}", "channel": channel,
                     "sourceFile": "수기입력", "orderNumber": order_number,
                     "orderedAt": str(payload.get("orderedAt", "")).strip() or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     "productName": product_name, "optionName": str(payload.get("optionName", "")).strip(),
@@ -451,13 +563,14 @@ class Handler(SimpleHTTPRequestHandler):
                     "address": str(payload.get("address", "")).strip(),
                     "deliveryMessage": str(payload.get("deliveryMessage", "")).strip(), "courier": "", "trackingNumber": "",
                     "managementNumber": "", "preparing": False, "preparingBy": "", "preparingAt": "",
+                    "softwareInspectionDone": software_inspection_done, "softwareInspectionBy": worker if software_inspection_done else "", "softwareInspectionAt": now if software_inspection_done else "",
                     "productionDone": False, "productionBy": "", "productionAt": "",
                     "shippingDone": False, "shippingBy": "", "shippingAt": "",
                     "createdBy": worker, "createdAt": now, "updatedAt": now,
                 }
                 orders.append(order)
                 write_orders(orders)
-            write_audit("order_created", user, orderId=order["id"], orderNumber=order_number, channel="전화주문")
+            write_audit("order_created", user, orderId=order["id"], orderNumber=order_number, channel=channel)
             return self._json(201, order)
         except (ValueError, json.JSONDecodeError):
             return self._json(400, {"error": "수기 주문 내용을 확인하세요."})
@@ -484,17 +597,16 @@ class Handler(SimpleHTTPRequestHandler):
                 if order.get("cancelledAt"):
                     return self._json(409, {"error": "이미 취소된 주문입니다.", "order": order})
                 if action == "cancel":
-                    if user_role(user) not in ORDER_ADMIN_ROLES:
+                    # 취소는 전용 권한으로만 허용하고, 출고 완료 후에도 같은 흐름으로 처리한다.
+                    if user_role(user) not in CANCEL_ORDER_ROLES:
                         return self._json(403, {"error": "해당 권한으로 주문을 취소할 수 없습니다.", "order": order})
                     reason = str(payload.get("reason", "")).strip()
                     if not reason:
                         return self._json(400, {"error": "취소 사유를 입력하세요.", "order": order})
                     if len(reason) > 500:
                         return self._json(400, {"error": "취소 사유는 500자 이내로 입력하세요.", "order": order})
-                    if order.get("shippingDone") or order.get("archivedAt"):
-                        return self._json(409, {"error": "출고 완료 또는 보관된 주문은 취소할 수 없습니다.", "order": order})
-                    if order.get("productionDone") and user_role(user) not in MEMBER_MANAGEMENT_ROLES:
-                        return self._json(403, {"error": "제작 완료 주문은 총책임자 또는 개발자만 취소할 수 있습니다.", "order": order})
+                    if order.get("archivedAt"):
+                        return self._json(409, {"error": "보관된 주문은 취소할 수 없습니다.", "order": order})
                     order.update({
                         "cancelledAt": now, "cancelledBy": worker, "cancelReason": reason,
                         "preparing": False, "preparingBy": "", "preparingAt": "", "updatedAt": now,
@@ -511,17 +623,107 @@ class Handler(SimpleHTTPRequestHandler):
                     if not checked and order.get("preparing") and current_worker and current_worker != worker:
                         return self._json(409, {"error": f"준비 중 상태는 {current_worker} 작업자만 해제할 수 있습니다.", "order": order})
                     order.update({"preparing": checked, "preparingBy": worker if checked else "", "preparingAt": now if checked else ""})
+                elif action == "softwareInspection":
+                    if checked and order.get("shippingDone"):
+                        return self._json(409, {"error": "출고 완료된 주문은 소프트웨어 검수 상태를 변경할 수 없습니다.", "order": order})
+                    if checked and not order.get("productionDone"):
+                        return self._json(409, {"error": "제작 완료 후 소프트웨어 검수를 완료할 수 있습니다.", "order": order})
+                    order.update({
+                        "softwareInspectionDone": checked, "softwareInspectionBy": worker if checked else "", "softwareInspectionAt": now if checked else "",
+                    })
+                    if not checked:
+                        order.update({
+                            "shippingDone": False, "shippingBy": "", "shippingAt": "",
+                        })
                 elif action == "managementNumber":
-                    management_number = str(payload.get("managementNumber", "")).strip()
-                    if len(management_number) > 100:
-                        return self._json(400, {"error": "제품 관리번호는 100자 이내로 입력하세요."})
-                    duplicate = next((item for item in orders if item.get("id") != order.get("id") and management_number and str(item.get("managementNumber", "")).strip() == management_number), None)
+                    management_numbers = split_management_numbers(payload.get("managementNumber", ""))
+                    quantity = max(1, int(order.get("quantity") or 1))
+                    if management_numbers and len(management_numbers) != quantity:
+                        return self._json(400, {"error": f"수량 {quantity}개에 맞게 제품 관리번호를 {quantity}줄 입력하세요.", "order": order})
+                    if len(management_numbers) > 100:
+                        return self._json(400, {"error": "제품 관리번호는 100개까지 입력할 수 있습니다.", "order": order})
+                    if len(management_numbers) != len(set(management_numbers)):
+                        return self._json(409, {"error": "제품 관리번호가 중복되었습니다.", "order": order})
+                    existing_numbers = set()
+                    for item in orders:
+                        if item.get("id") == order.get("id"):
+                            continue
+                        existing_numbers.update(split_management_numbers(item.get("managementNumber", "")))
+                    duplicate = next((number for number in management_numbers if number in existing_numbers), None)
                     if duplicate:
-                        return self._json(409, {"error": f"이미 주문 {duplicate.get('orderNumber', '')}에 등록된 관리번호입니다.", "order": order})
+                        return self._json(409, {"error": f"이미 다른 주문에 등록된 관리번호입니다: {duplicate}", "order": order})
+                    management_number = "\n".join(management_numbers)
                     order.update({"managementNumber": management_number, "managementNumberBy": worker if management_number else "", "managementNumberAt": now if management_number else ""})
+                elif action == "applyShippingUpdate":
+                    if user_role(user) not in ORDER_EDIT_ROLES:
+                        return self._json(403, {"error": "해당 권한으로 배송지 변경을 반영할 수 없습니다.", "order": order})
+                    if order.get("archivedAt"):
+                        return self._json(409, {"error": "보관된 주문은 배송지를 수정할 수 없습니다.", "order": order})
+                    if order.get("cancelledAt"):
+                        return self._json(409, {"error": "취소된 주문은 배송지를 수정할 수 없습니다.", "order": order})
+                    if order.get("shippingDone"):
+                        return self._json(409, {"error": "출고 확인된 주문은 배송지를 수정할 수 없습니다.", "order": order})
+                    pending = order.get("pendingShippingUpdate")
+                    if not isinstance(pending, dict) or not isinstance(pending.get("fields"), dict):
+                        return self._json(400, {"error": "반영할 배송지 변경이 없습니다.", "order": order})
+                    before = {field: order.get(field, "") for field in SHIPPING_UPDATE_FIELDS}
+                    updates = {field: str(pending["fields"].get(field, order.get(field, ""))).strip() for field in SHIPPING_UPDATE_FIELDS}
+                    order.update(updates)
+                    order.pop("pendingShippingUpdate", None)
+                    order["shippingUpdateAppliedBy"] = worker
+                    order["shippingUpdateAppliedAt"] = now
+                    write_audit("shipping_update_applied", user, orderId=order["id"], orderNumber=order.get("orderNumber", ""), before=before, after=updates)
+                elif action == "details":
+                    if user_role(user) not in ORDER_EDIT_ROLES:
+                        return self._json(403, {"error": "해당 권한으로 주문을 수정할 수 없습니다.", "order": order})
+                    if order.get("archivedAt"):
+                        return self._json(409, {"error": "보관된 주문은 수정할 수 없습니다.", "order": order})
+                    if order.get("cancelledAt"):
+                        return self._json(409, {"error": "취소된 주문은 수정할 수 없습니다.", "order": order})
+                    if order.get("shippingDone"):
+                        return self._json(409, {"error": "출고 완료된 주문은 수정할 수 없습니다.", "order": order})
+                    fields = payload.get("fields")
+                    if not isinstance(fields, dict):
+                        return self._json(400, {"error": "수정할 주문 정보를 확인하세요.", "order": order})
+                    try:
+                        quantity = max(1, int(fields.get("quantity", order.get("quantity", 1)) or 1))
+                        amount = max(0, int(fields.get("amount", order.get("amount", 0)) or 0))
+                    except (TypeError, ValueError):
+                        return self._json(400, {"error": "수량과 금액은 숫자로 입력하세요.", "order": order})
+                    updates = {
+                        "channel": str(fields.get("channel", order.get("channel", ""))).strip() or order.get("channel", ""),
+                        "productName": str(fields.get("productName", order.get("productName", ""))).strip(),
+                        "optionName": str(fields.get("optionName", order.get("optionName", ""))).strip(),
+                        "productCode": str(fields.get("productCode", order.get("productCode", ""))).strip(),
+                        "quantity": quantity,
+                        "amount": amount,
+                        "recipient": str(fields.get("recipient", order.get("recipient", ""))).strip(),
+                        "phone": str(fields.get("phone", order.get("phone", ""))).strip(),
+                        "postalCode": str(fields.get("postalCode", order.get("postalCode", ""))).strip(),
+                        "address": str(fields.get("address", order.get("address", ""))).strip(),
+                        "deliveryMessage": str(fields.get("deliveryMessage", order.get("deliveryMessage", ""))).strip(),
+                    }
+                    order.update(updates)
+                    if any(field in fields for field in SHIPPING_UPDATE_FIELDS):
+                        order.pop("pendingShippingUpdate", None)
+                    if "softwareInspectionDone" in fields:
+                        software_inspection_done = bool(fields.get("softwareInspectionDone"))
+                        if software_inspection_done and not order.get("productionDone"):
+                            return self._json(409, {"error": "제작 완료 후 소프트웨어 검수를 완료할 수 있습니다.", "order": order})
+                        order.update({
+                            "softwareInspectionDone": software_inspection_done,
+                            "softwareInspectionBy": worker if software_inspection_done else "",
+                            "softwareInspectionAt": now if software_inspection_done else "",
+                        })
+                        if not software_inspection_done:
+                            order.update({
+                                "shippingDone": False, "shippingBy": "", "shippingAt": "",
+                            })
                 elif action == "production":
                     if not checked and order.get("shippingDone"):
                         return self._json(409, {"error": "출고 완료된 주문은 제작 완료를 해제할 수 없습니다.", "order": order})
+                    if not checked and order.get("softwareInspectionDone"):
+                        return self._json(409, {"error": "소프트웨어 검수 완료된 주문은 제작 완료를 해제할 수 없습니다.", "order": order})
                     current_worker = str(order.get("preparingBy", "")).strip()
                     if checked and order.get("preparing") and current_worker and current_worker != worker:
                         return self._json(409, {"error": f"{current_worker} 작업자가 준비 중인 주문입니다.", "order": order})
@@ -534,6 +736,8 @@ class Handler(SimpleHTTPRequestHandler):
                 elif action == "shipping":
                     if checked and not order.get("productionDone"):
                         return self._json(409, {"error": "제작 완료 후 출고 처리할 수 있습니다.", "order": order})
+                    if checked and not order.get("softwareInspectionDone"):
+                        return self._json(409, {"error": "소프트웨어 검수 완료 후 출고 처리할 수 있습니다.", "order": order})
                     order.update({
                         "shippingDone": checked, "shippingBy": worker if checked else "", "shippingAt": now if checked else "",
                     })
@@ -606,11 +810,15 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json(400, {"error": "계정 정보를 확인하세요."})
 
     def _export_shipped(self, archive: bool) -> None:
+        # 출고 완료 주문만 내보내고, 아카이브 방식이면 내보낸 뒤 보관 상태로 바꾼다.
         headers = ["번호", "채널", "주문번호", "주문일", "상품명", "옵션", "수량", "상품코드", "제품관리번호", "수령인", "연락처", "우편번호", "주소", "배송메시지", "제작담당자", "제작완료일", "출고담당자", "출고완료일"]
         fields = ["channel", "orderNumber", "orderedAt", "productName", "optionName", "quantity", "productCode", "managementNumber", "recipient", "phone", "postalCode", "address", "deliveryMessage", "productionBy", "productionAt", "shippingBy", "shippingAt"]
         with LOCK:
             orders = read_orders()
-            new_shipped = [order for order in orders if order.get("shippingDone") and not order.get("archivedAt")]
+            new_shipped = [
+                order for order in orders
+                if order.get("shippingDone") and not order.get("archivedAt") and not order.get("cancelledAt")
+            ]
             if not new_shipped:
                 return self._json(400, {"error": "새로 출고 완료된 주문이 없습니다."})
             new_shipped.sort(key=lambda order: order.get("shippingAt", ""))

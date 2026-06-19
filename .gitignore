@@ -6,6 +6,7 @@ data/backups/
 data/*.backup-*
 data/*.tmp
 *.log
+*.pid
 .DS_Store
 __pycache__/
 *.pyc

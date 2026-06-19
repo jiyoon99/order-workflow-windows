@@ -1,6 +1,7 @@
 import http.client
 import io
 import json
+import os
 import sys
 import tempfile
 import threading
@@ -95,9 +96,198 @@ class OrderSortingTests(unittest.TestCase):
             {"importKey": "new-1", "orderNumber": "1-duplicate"},
             {"importKey": "new-2", "orderNumber": "3"},
         ]
-        added = server.new_unique_orders(existing, imported)
+        added, _ = server.new_unique_orders(existing, imported)
         self.assertEqual([order["orderNumber"] for order in added], ["1", "3"])
 
+    def test_ignores_partial_content_when_building_dedupe_key(self):
+        existing = [{
+            "importKey": "first-import",
+            "orderNumber": "ORDER-1",
+            "recipient": "홍길동",
+            "productName": "노트북",
+            "optionName": "",
+            "address": "",
+        }]
+        imported = [{
+            "importKey": "second-import",
+            "orderNumber": "ORDER-2",
+            "recipient": "홍길동",
+            "productName": "노트북",
+            "optionName": "",
+            "address": "",
+        }]
+        added, _ = server.new_unique_orders(existing, imported)
+        self.assertEqual([order["orderNumber"] for order in added], ["ORDER-2"])
+
+    def test_requires_matching_address_for_content_based_duplicates(self):
+        existing = [{
+            "importKey": "first-import",
+            "orderNumber": "ORDER-1",
+            "recipient": "홍길동",
+            "productName": "노트북",
+            "optionName": "기본형",
+            "address": "서울시 강남구",
+        }]
+        imported = [{
+            "importKey": "second-import",
+            "orderNumber": "ORDER-2",
+            "recipient": "홍길동",
+            "productName": "노트북",
+            "optionName": "기본형",
+            "address": "서울시 서초구",
+        }]
+        added, _ = server.new_unique_orders(existing, imported)
+        self.assertEqual([order["orderNumber"] for order in added], ["ORDER-2"])
+
+    def test_normalizes_whitespace_and_case_for_content_based_duplicates(self):
+        existing = [{
+            "importKey": "first-import",
+            "recipient": "홍길동",
+            "productName": "Notebook Pro",
+            "optionName": "16GB",
+            "address": "서울시 강남구  테헤란로 1",
+        }]
+        imported = [{
+            "importKey": "second-import",
+            "recipient": " 홍길동 ",
+            "productName": "notebook pro",
+            "optionName": "16gb",
+            "address": "서울시  강남구 테헤란로   1",
+        }]
+        added, _ = server.new_unique_orders(existing, imported)
+        self.assertEqual(added, [])
+
+    def test_normalizes_address_punctuation_for_content_based_duplicates(self):
+        existing = [{
+            "importKey": "first-import",
+            "recipient": "홍길동",
+            "productName": "노트북",
+            "optionName": "기본형",
+            "address": "서울시 강남구 테헤란로 1, 101동",
+        }]
+        imported = [{
+            "importKey": "second-import",
+            "recipient": "홍길동",
+            "productName": "노트북",
+            "optionName": "기본형",
+            "address": "서울시 강남구 테헤란로 1 101동",
+        }]
+        added, _ = server.new_unique_orders(existing, imported)
+        self.assertEqual(added, [])
+
+    def test_uses_phone_when_available_for_content_based_duplicates(self):
+        existing = [{
+            "importKey": "first-import",
+            "orderNumber": "ORDER-1",
+            "recipient": "홍길동",
+            "productName": "노트북",
+            "optionName": "기본형",
+            "address": "서울시 강남구 테헤란로 1",
+            "phone": "010-1234-5678",
+        }]
+        imported = [{
+            "importKey": "second-import",
+            "orderNumber": "ORDER-2",
+            "recipient": "홍길동",
+            "productName": "노트북",
+            "optionName": "기본형",
+            "address": "서울시 강남구 테헤란로 1",
+            "phone": "010-9999-0000",
+        }]
+        added, _ = server.new_unique_orders(existing, imported)
+        self.assertEqual([order["orderNumber"] for order in added], ["ORDER-2"])
+
+    def test_removes_duplicate_orders_with_same_content(self):
+        existing = [{
+            "importKey": "first-import",
+            "recipient": "홍길동",
+            "productName": "노트북",
+            "optionName": "기본형",
+            "address": "서울시 강남구",
+        }]
+        imported = [
+            {
+                "importKey": "second-import",
+                "recipient": "홍길동",
+                "productName": "노트북",
+                "optionName": "기본형",
+                "address": "서울시 강남구",
+            }
+        ]
+        added, _ = server.new_unique_orders(existing, imported)
+        self.assertEqual(added, [])
+
+    def test_keeps_same_product_when_address_differs(self):
+        existing = [{
+            "importKey": "first-import",
+            "recipient": "홍길동",
+            "productName": "노트북",
+            "optionName": "기본형",
+            "address": "서울시 강남구",
+        }]
+        imported = [
+            {
+                "importKey": "second-import",
+                "recipient": "홍길동",
+                "productName": "노트북",
+                "optionName": "기본형",
+                "address": "서울시 서초구",
+            }
+        ]
+        added, _ = server.new_unique_orders(existing, imported)
+        self.assertEqual(len(added), 1)
+
+    def test_detects_shipping_update_for_same_order_number(self):
+        existing = [{
+            "id": "order-1",
+            "importKey": "first-import",
+            "orderNumber": "ORDER-1",
+            "recipient": "홍길동",
+            "phone": "010-1111-2222",
+            "postalCode": "12345",
+            "address": "서울시 강남구",
+            "deliveryMessage": "문 앞",
+            "productName": "노트북",
+            "optionName": "기본형",
+            "shippingDone": False,
+        }]
+        imported = [{
+            "importKey": "second-import",
+            "orderNumber": "ORDER-1",
+            "recipient": "홍길동",
+            "phone": "010-9999-0000",
+            "postalCode": "54321",
+            "address": "서울시 서초구",
+            "deliveryMessage": "경비실",
+            "productName": "노트북",
+            "optionName": "기본형",
+            "sourceFile": "changed-address.xlsx",
+        }]
+        added, shipping_updates = server.new_unique_orders(existing, imported, "2026-06-18T00:00:00+00:00")
+        self.assertEqual(added, [])
+        self.assertEqual(shipping_updates, 1)
+        self.assertEqual(existing[0]["pendingShippingUpdate"]["fields"]["address"], "서울시 서초구")
+        self.assertEqual(existing[0]["pendingShippingUpdate"]["changed"]["phone"]["incoming"], "010-9999-0000")
+
+    def test_removes_duplicate_orders_against_shipped_orders(self):
+        existing = [{
+            "importKey": "shipped-import",
+            "recipient": "홍길동",
+            "productName": "노트북",
+            "optionName": "기본형",
+            "address": "서울시 강남구",
+            "shippingDone": True,
+            "archivedAt": "2026-06-17T00:00:00+00:00",
+        }]
+        imported = [{
+            "importKey": "fresh-import",
+            "recipient": "홍길동",
+            "productName": "노트북",
+            "optionName": "기본형",
+            "address": "서울시 강남구",
+        }]
+        added, _ = server.new_unique_orders(existing, imported)
+        self.assertEqual(added, [])
     def test_blocks_repeated_login_failures_and_clears_on_success(self):
         key = "127.0.0.1:test-user"
         server.LOGIN_FAILURES.clear()
@@ -114,11 +304,13 @@ class OrderSortingTests(unittest.TestCase):
                 server.DATA_FILE = Path(directory) / "orders.json"
                 server.write_orders([{"id": "first"}])
                 server.write_orders([{"id": "second"}])
-                self.assertEqual(server.DATA_FILE.stat().st_mode & 0o777, 0o600)
+                if os.name != "nt":
+                    self.assertEqual(server.DATA_FILE.stat().st_mode & 0o777, 0o600)
                 backups = list((Path(directory) / "backups").glob("orders.json.*.bak"))
                 self.assertEqual(len(backups), 1)
-                self.assertEqual(backups[0].stat().st_mode & 0o777, 0o600)
-                self.assertEqual(json.loads(backups[0].read_text()), [{"id": "first"}])
+                if os.name != "nt":
+                    self.assertEqual(backups[0].stat().st_mode & 0o777, 0o600)
+                self.assertEqual(json.loads(backups[0].read_text(encoding="utf-8")), [{"id": "first"}])
             finally:
                 server.DATA_FILE = original
 
@@ -128,13 +320,24 @@ class OrderSortingTests(unittest.TestCase):
             try:
                 server.AUDIT_FILE = Path(directory) / "audit.jsonl"
                 server.write_audit("order_updated", {"id": "user-1", "displayName": "작업자"}, orderId="order-1", action="production")
-                record = json.loads(server.AUDIT_FILE.read_text())
-                self.assertEqual(server.AUDIT_FILE.stat().st_mode & 0o777, 0o600)
+                record = json.loads(server.AUDIT_FILE.read_text(encoding="utf-8"))
+                if os.name != "nt":
+                    self.assertEqual(server.AUDIT_FILE.stat().st_mode & 0o777, 0o600)
                 self.assertEqual(record["event"], "order_updated")
                 self.assertEqual(record["orderId"], "order-1")
                 self.assertNotIn("phone", record)
             finally:
                 server.AUDIT_FILE = original
+
+    def test_reads_orders_with_utf8_bom(self):
+        with tempfile.TemporaryDirectory() as directory:
+            original = server.DATA_FILE
+            try:
+                server.DATA_FILE = Path(directory) / "orders.json"
+                server.DATA_FILE.write_bytes(b"\xef\xbb\xbf" + json.dumps([{"id": "order-1"}], ensure_ascii=False).encode("utf-8"))
+                self.assertEqual(server.read_orders(), [{"id": "order-1"}])
+            finally:
+                server.DATA_FILE = original
 
 
 class ServerFlowTests(unittest.TestCase):
@@ -265,6 +468,64 @@ class ServerFlowTests(unittest.TestCase):
         status, _, _ = self.request("PATCH", f"/api/orders/{second_order['id']}", cancel, {"Content-Type": "application/json", "Content-Length": str(len(cancel))})
         self.assertEqual(status, 200)
 
+        for role, username, display_name, order_number in [
+            ("md", "cancel-md", "취소MD", "CANCEL-004"),
+            ("as_manager", "cancel-as", "취소AS", "CANCEL-005"),
+            ("sales_manager", "cancel-sales", "취소판매", "CANCEL-006"),
+        ]:
+            role_payload = json.dumps({"username": username, "displayName": display_name, "password": "password123", "role": role}).encode()
+            self.assertEqual(self.request("POST", "/api/users", role_payload, {"Content-Type": "application/json", "Content-Length": str(len(role_payload))})[0], 201)
+            order_payload = json.dumps({
+                "orderNumber": order_number, "productName": f"{role} 제작 완료 취소",
+                "quantity": 1, "amount": 10000, "recipient": f"{display_name}고객", "phone": "010-0000-0003",
+            }).encode()
+            status, _, content = self.request("POST", "/api/orders/manual", order_payload, {"Content-Type": "application/json", "Content-Length": str(len(order_payload))})
+            self.assertEqual(status, 201)
+            order_item = json.loads(content)
+            production = json.dumps({"action": "production", "checked": True}).encode()
+            self.assertEqual(self.request("PATCH", f"/api/orders/{order_item['id']}", production, {"Content-Type": "application/json", "Content-Length": str(len(production))})[0], 200)
+            self.logout()
+            self.assertEqual(self.login(username)[0], 200)
+            status, _, _ = self.request("PATCH", f"/api/orders/{order_item['id']}", cancel, {"Content-Type": "application/json", "Content-Length": str(len(cancel))})
+            self.assertEqual(status, 200)
+            self.logout()
+            self.assertEqual(self.login("admin")[0], 200)
+
+        third_payload = json.dumps({
+            "orderNumber": "CANCEL-003", "productName": "출고 완료 취소 테스트 상품",
+            "quantity": 1, "amount": 10000, "recipient": "출고완료고객", "phone": "010-0000-0002",
+        }).encode()
+        status, _, content = self.request("POST", "/api/orders/manual", third_payload, {"Content-Type": "application/json", "Content-Length": str(len(third_payload))})
+        self.assertEqual(status, 201)
+        third_order = json.loads(content)
+        production = json.dumps({"action": "production", "checked": True}).encode()
+        self.assertEqual(self.request("PATCH", f"/api/orders/{third_order['id']}", production, {"Content-Type": "application/json", "Content-Length": str(len(production))})[0], 200)
+        inspection = json.dumps({"action": "softwareInspection", "checked": True}).encode()
+        self.assertEqual(self.request("PATCH", f"/api/orders/{third_order['id']}", inspection, {"Content-Type": "application/json", "Content-Length": str(len(inspection))})[0], 200)
+        shipping = json.dumps({"action": "shipping", "checked": True}).encode()
+        self.assertEqual(self.request("PATCH", f"/api/orders/{third_order['id']}", shipping, {"Content-Type": "application/json", "Content-Length": str(len(shipping))})[0], 200)
+        status, _, content = self.request("PATCH", f"/api/orders/{third_order['id']}", cancel, {"Content-Type": "application/json", "Content-Length": str(len(cancel))})
+        self.assertEqual(status, 200)
+        cancelled_shipped = json.loads(content)
+        self.assertEqual(cancelled_shipped["id"], third_order["id"])
+        self.assertEqual(cancelled_shipped["cancelReason"], "고객 요청")
+
+        status, _, content = self.request("GET", "/api/orders")
+        active_ids = [item["id"] for item in json.loads(content)]
+        self.assertNotIn(third_order["id"], active_ids)
+        self.assertNotIn(order["id"], active_ids)
+
+        status, _, content = self.request("GET", "/api/orders/cancelled")
+        cancelled_ids = [item["id"] for item in json.loads(content)]
+        self.assertIn(order["id"], cancelled_ids)
+        self.assertIn(second_order["id"], cancelled_ids)
+        self.assertIn(third_order["id"], cancelled_ids)
+
+        status, _, content = self.request("GET", "/api/orders/as-history")
+        as_history_ids = [item["id"] for item in json.loads(content)]
+        self.assertNotIn(third_order["id"], as_history_ids)
+        self.assertEqual(as_history_ids, [])
+
     def test_complete_order_flow(self):
         boundary = "order-workflow-test-boundary"
         chunks = []
@@ -340,10 +601,16 @@ class ServerFlowTests(unittest.TestCase):
         premature_shipping = json.dumps({"action": "shipping", "checked": True}).encode()
         status, _, _ = self.request("PATCH", f"/api/orders/{order['id']}", premature_shipping, {"Content-Type": "application/json", "Content-Length": str(len(premature_shipping))})
         self.assertEqual(status, 409)
+        premature_inspection = json.dumps({"action": "softwareInspection", "checked": True}).encode()
+        status, _, _ = self.request("PATCH", f"/api/orders/{order['id']}", premature_inspection, {"Content-Type": "application/json", "Content-Length": str(len(premature_inspection))})
+        self.assertEqual(status, 409)
         update = json.dumps({"action": "production", "checked": True, "worker": "테스트작업자"}).encode()
         status, _, content = self.request("PATCH", f"/api/orders/{order['id']}", update, {"Content-Type": "application/json", "Content-Length": str(len(update))})
         self.assertEqual(status, 200)
         self.assertFalse(json.loads(content)["preparing"])
+        update = json.dumps({"action": "softwareInspection", "checked": True, "worker": "테스트작업자"}).encode()
+        status, _, _ = self.request("PATCH", f"/api/orders/{order['id']}", update, {"Content-Type": "application/json", "Content-Length": str(len(update))})
+        self.assertEqual(status, 200)
         update = json.dumps({"action": "shipping", "checked": True, "worker": "테스트작업자"}).encode()
         status, _, _ = self.request("PATCH", f"/api/orders/{order['id']}", update, {"Content-Type": "application/json", "Content-Length": str(len(update))})
         self.assertEqual(status, 200)
@@ -389,10 +656,82 @@ class ServerFlowTests(unittest.TestCase):
         status, _, content = self.request("POST", "/api/orders/manual", payload, headers)
         self.assertEqual(status, 201)
         order = json.loads(content)
-        self.assertEqual(order["channel"], "전화주문")
+        self.assertEqual(order["channel"], "전화")
         self.assertEqual(order["createdBy"], "관리자")
         status, _, _ = self.request("POST", "/api/orders/manual", payload, headers)
         self.assertEqual(status, 409)
+
+    def test_manual_and_detail_edit_cannot_bypass_software_inspection_flow(self):
+        payload = json.dumps({
+            "orderNumber": "SW-BYPASS-001", "productName": "검수 우회 테스트",
+            "quantity": 1, "recipient": "검수고객", "softwareInspectionDone": True,
+        }).encode()
+        headers = {"Content-Type": "application/json", "Content-Length": str(len(payload))}
+        status, _, _ = self.request("POST", "/api/orders/manual", payload, headers)
+        self.assertEqual(status, 409)
+
+        order_payload = json.dumps({
+            "orderNumber": "SW-BYPASS-002", "productName": "검수 수정 테스트",
+            "quantity": 1, "recipient": "수정고객",
+        }).encode()
+        status, _, content = self.request("POST", "/api/orders/manual", order_payload, {"Content-Type": "application/json", "Content-Length": str(len(order_payload))})
+        self.assertEqual(status, 201)
+        order = json.loads(content)
+
+        edit = json.dumps({"action": "details", "fields": {"softwareInspectionDone": True}}).encode()
+        status, _, _ = self.request("PATCH", f"/api/orders/{order['id']}", edit, {"Content-Type": "application/json", "Content-Length": str(len(edit))})
+        self.assertEqual(status, 409)
+
+        production = json.dumps({"action": "production", "checked": True}).encode()
+        self.assertEqual(self.request("PATCH", f"/api/orders/{order['id']}", production, {"Content-Type": "application/json", "Content-Length": str(len(production))})[0], 200)
+        status, _, content = self.request("PATCH", f"/api/orders/{order['id']}", edit, {"Content-Type": "application/json", "Content-Length": str(len(edit))})
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(content)["softwareInspectionDone"])
+
+    def test_import_detects_and_applies_shipping_update(self):
+        payload = json.dumps({
+            "orderNumber": "SHIP-UPDATE-001", "productName": "배송지 변경 테스트",
+            "quantity": 1, "recipient": "기존고객", "phone": "010-1111-2222",
+            "postalCode": "12345", "address": "서울시 강남구", "deliveryMessage": "문 앞",
+        }).encode()
+        status, _, content = self.request("POST", "/api/orders/manual", payload, {"Content-Type": "application/json", "Content-Length": str(len(payload))})
+        self.assertEqual(status, 201)
+        order = json.loads(content)
+
+        workbook = write_xlsx(
+            ["주문번호", "상품명", "수령인", "연락처", "우편번호", "배송지주소", "배송메시지", "수량"],
+            [["SHIP-UPDATE-001", "배송지 변경 테스트", "변경고객", "010-9999-0000", "54321", "서울시 서초구", "경비실", "1"]],
+        )
+        boundary = "shipping-update-boundary"
+        body = b"".join([
+            f"--{boundary}\r\n".encode(),
+            b'Content-Disposition: form-data; name="files"; filename="shipping-update.xlsx"\r\n',
+            b"Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet\r\n\r\n",
+            workbook,
+            b"\r\n",
+            f"--{boundary}--\r\n".encode(),
+        ])
+        status, _, content = self.request("POST", "/api/import", body, {"Content-Type": f"multipart/form-data; boundary={boundary}", "Content-Length": str(len(body))})
+        self.assertEqual(status, 200)
+        result = json.loads(content)
+        self.assertEqual(result["added"], 0)
+        self.assertEqual(result["shippingUpdates"], 1)
+
+        status, _, content = self.request("GET", "/api/orders")
+        updated_order = next(item for item in json.loads(content) if item["id"] == order["id"])
+        self.assertEqual(updated_order["address"], "서울시 강남구")
+        self.assertEqual(updated_order["pendingShippingUpdate"]["fields"]["address"], "서울시 서초구")
+
+        apply_update = json.dumps({"action": "applyShippingUpdate", "checked": True}).encode()
+        status, _, content = self.request("PATCH", f"/api/orders/{order['id']}", apply_update, {"Content-Type": "application/json", "Content-Length": str(len(apply_update))})
+        self.assertEqual(status, 200)
+        applied = json.loads(content)
+        self.assertEqual(applied["recipient"], "변경고객")
+        self.assertEqual(applied["phone"], "010-9999-0000")
+        self.assertEqual(applied["postalCode"], "54321")
+        self.assertEqual(applied["address"], "서울시 서초구")
+        self.assertEqual(applied["deliveryMessage"], "경비실")
+        self.assertNotIn("pendingShippingUpdate", applied)
 
     def test_public_registration_creates_worker(self):
         self.assertEqual(self.logout()[0], 200)

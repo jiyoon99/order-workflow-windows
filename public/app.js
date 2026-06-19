@@ -1,4 +1,4 @@
-const state = { orders: [], archivedOrders: [], cancelledOrders: [], asHistoryOrders: [], user: null, setupRequired: false, authMode: "login", selectedChannel: "all", managementDrafts: {} };
+const state = { orders: [], archivedOrders: [], cancelledOrders: [], asHistoryOrders: [], user: null, setupRequired: false, authMode: "login", selectedChannel: "all", managementDrafts: {}, orderDrafts: {}, editingOrderId: null };
 const $ = (selector) => document.querySelector(selector);
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (char) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", "'":"&#39;", '"':"&quot;" })[char]);
 const formatDate = (value) => value ? new Date(value).toLocaleString("ko-KR", { dateStyle:"short", timeStyle:"short" }) : "";
@@ -6,11 +6,32 @@ const formatAmount = (value) => Number(value || 0).toLocaleString("ko-KR");
 const roleLabels = { owner:"총책임자", developer:"개발자", as_manager:"AS 담당자", sales_manager:"판매 담당자", md:"MD", worker:"일반 작업자", admin:"총책임자" };
 const roleOrder = ["owner", "developer", "as_manager", "sales_manager", "md", "worker"];
 const memberManagementRoles = new Set(["owner", "developer"]);
+const cancelOrderRoles = new Set(["owner", "developer", "as_manager", "sales_manager", "md"]);
 const orderAdminRoles = new Set(["owner", "developer", "sales_manager", "md"]);
+const orderEditRoles = new Set(["owner", "developer", "as_manager", "sales_manager", "md"]);
 const asHistoryRoles = new Set(["owner", "developer", "as_manager"]);
 const roleLabel = (role) => roleLabels[role] || role;
 const roleOptions = (selected, allowedRoles = roleOrder) => allowedRoles
   .map((role) => `<option value="${role}" ${role === selected ? "selected" : ""}>${roleLabel(role)}</option>`).join("");
+const themeStorageKey = "order-workflow-theme";
+
+function systemTheme() {
+  return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function applyTheme(theme) {
+  const nextTheme = theme === "dark" ? "dark" : "light";
+  document.body.dataset.theme = nextTheme;
+  localStorage.setItem(themeStorageKey, nextTheme);
+  const button = $("#theme-toggle");
+  if (button) button.textContent = nextTheme === "dark" ? "라이트 모드" : "다크 모드";
+}
+
+function initTheme() {
+  applyTheme(localStorage.getItem(themeStorageKey) || systemTheme());
+}
+
+initTheme();
 
 function productDetails(order) {
   const optionParts = String(order.optionName || "").split(" / ").map((value) => value.trim()).filter(Boolean);
@@ -21,55 +42,90 @@ function productDetails(order) {
 
 function channelTone(channel) {
   const value = String(channel || "");
+  if (value === "b2b" || value.toLowerCase().includes("b2b")) return "b2b";
+  if (value === "b2c" || value.toLowerCase().includes("b2c")) return "b2c";
+  if (value.includes("전화") || value.includes("수기")) return "phone";
+  if (value.includes("방문")) return "visit";
   if (value.includes("쿠팡")) return "coupang";
   if (value.includes("카카오")) return "kakao";
   if (value.includes("고도몰") || value.includes("자사")) return "godomall";
-  if (value.includes("전화") || value.includes("방문") || value.includes("수기")) return "manual";
   return "other";
 }
 
 function orderStatus(order) {
-  if (order.shippingDone) return { tone:"shipped", label:"출고 완료" };
+  if (order.shippingDone) return { tone:"shipped", label:"출고 확인" };
+  if (order.softwareInspectionDone) return { tone:"produced", label:"검수 완료" };
   if (order.productionDone) return { tone:"produced", label:"제작 완료" };
   if (order.preparing) return { tone:"preparing", label:"준비 중" };
   return { tone:"waiting", label:"제작 대기" };
 }
 
+function shippingUpdatePanel(order) {
+  const pending = order.pendingShippingUpdate;
+  if (!pending?.fields) return "";
+  const fields = pending.fields;
+  const warning = pending.contentChangeWarning ? `<span class="shipping-update-warning">상품/수량 변경도 감지됨</span>` : "";
+  return `
+    <div class="shipping-update">
+      <strong>배송지 변경 감지</strong>
+      <dl>
+        <div><dt>수령인</dt><dd>${escapeHtml(fields.recipient || order.recipient)}</dd></div>
+        <div><dt>연락처</dt><dd>${escapeHtml(fields.phone || order.phone)}</dd></div>
+        <div><dt>우편번호</dt><dd>${escapeHtml(fields.postalCode || order.postalCode)}</dd></div>
+        <div><dt>주소</dt><dd>${escapeHtml(fields.address || order.address)}</dd></div>
+        <div><dt>메시지</dt><dd>${escapeHtml(fields.deliveryMessage || "")}</dd></div>
+      </dl>
+      ${warning}
+      ${canEditOrders() && !order.shippingDone ? `<button class="apply-shipping-update primary" type="button">배송지 반영</button>` : ""}
+    </div>`;
+}
+
 function orderStatusKey(order) {
-  return order.shippingDone ? "shipped" : order.productionDone ? "produced" : order.preparing ? "preparing" : "waiting";
+  return order.shippingDone ? "shipped" : order.softwareInspectionDone ? "softwareInspection" : order.productionDone ? "produced" : order.preparing ? "preparing" : "waiting";
 }
 
 function worker() { return state.user?.displayName || ""; }
-function canManageOrders() { return orderAdminRoles.has(state.user?.role === "admin" ? "owner" : state.user?.role); }
+function currentRole() { return state.user?.role === "admin" ? "owner" : state.user?.role; }
+function canManageOrders() { return orderAdminRoles.has(currentRole()); }
+function canEditOrders() { return orderEditRoles.has(currentRole()); }
 function canCancelOrder(order) {
-  const role = state.user?.role === "admin" ? "owner" : state.user?.role;
-  return orderAdminRoles.has(role) && !order.shippingDone && (!order.productionDone || memberManagementRoles.has(role));
+  return cancelOrderRoles.has(currentRole());
 }
 function showMessage(text, error = false) { $("#message").textContent = text; $("#message").classList.toggle("error", error); }
 function showManualMessage(text, error = false) { $("#manual-message").textContent = text; $("#manual-message").classList.toggle("error", error); }
 
 function updateAccessUI() {
+  // 역할에 따라 화면 전체에서 볼 수 있는 기능을 묶어서 숨기거나 보여준다.
   const role = state.user?.role === "admin" ? "owner" : state.user?.role;
   const canManageMembers = memberManagementRoles.has(role);
   const canManageOrders = orderAdminRoles.has(role);
+  const canEditOrdersNow = orderEditRoles.has(role);
   const canViewAsHistory = asHistoryRoles.has(role);
   $("#members-tab").toggleAttribute("hidden", !canManageMembers);
   document.querySelectorAll(".as-history-only").forEach((element) => element.toggleAttribute("hidden", !canViewAsHistory));
   $("#upload-form").toggleAttribute("hidden", !canManageOrders);
   $("#export-button").toggleAttribute("hidden", !canManageOrders);
-  $("#manual-order").toggleAttribute("hidden", !canManageOrders);
+  $("#manual-order").toggleAttribute("hidden", !(canManageOrders || canEditOrdersNow));
   if (!canManageMembers && !$("#members-view").hidden) showWorkspaceView("orders-view");
 }
 
 function showWorkspaceView(viewId) {
+  // 탭 이동 시 필요한 데이터만 다시 읽어서 화면을 최신 상태로 맞춘다.
   document.querySelectorAll(".workspace-view").forEach((view) => { view.hidden = view.id !== viewId; });
   document.querySelectorAll(".workspace-tab").forEach((tab) => { tab.classList.toggle("is-active", tab.dataset.view === viewId); });
   if (viewId === "members-view") loadUsers();
   if (viewId === "shipping-customers-view") {
     loadArchivedOrders();
-    if (asHistoryRoles.has(state.user?.role === "admin" ? "owner" : state.user?.role)) loadAsHistory();
+    if (asHistoryRoles.has(currentRole())) loadAsHistory();
   }
   if (viewId === "cancelled-view") loadCancelledOrders();
+}
+
+function resetOrderFilters() {
+  state.selectedChannel = "all";
+  $("#search").value = "";
+  $("#status-filter").value = "all";
+  syncChannelFilter();
 }
 
 function setAuthMode(mode) {
@@ -105,6 +161,109 @@ function orderTime(order) {
   return Number.isNaN(timestamp) ? 0 : timestamp;
 }
 
+function captureOrderInputState() {
+  const input = document.activeElement;
+  if (!input || (!input.classList?.contains("management-number") && !input.classList?.contains("order-edit-field"))) return null;
+  const row = input.closest("tr");
+  if (!row?.dataset.id) return null;
+  return {
+    orderId: row.dataset.id,
+    field: input.dataset.field || "managementNumber",
+    selectionStart: input.selectionStart,
+    selectionEnd: input.selectionEnd,
+    selectionDirection: input.selectionDirection,
+  };
+}
+
+function restoreOrderInputState(snapshot) {
+  if (!snapshot) return;
+  const selector = snapshot.field === "managementNumber"
+    ? `tr[data-id="${snapshot.orderId}"] .management-number`
+    : `tr[data-id="${snapshot.orderId}"] .order-edit-field[data-field="${snapshot.field}"]`;
+  const input = document.querySelector(selector);
+  if (!input) return;
+  input.focus({ preventScroll: true });
+  if (typeof snapshot.selectionStart === "number" && typeof snapshot.selectionEnd === "number") {
+    input.setSelectionRange(snapshot.selectionStart, snapshot.selectionEnd, snapshot.selectionDirection || "none");
+  }
+}
+
+function getOrderDraft(order) {
+  return state.orderDrafts[order.id] || null;
+}
+
+function orderFieldValue(order, field) {
+  const draft = getOrderDraft(order);
+  return draft ? draft[field] ?? "" : order[field] ?? "";
+}
+
+function managementNumberCount(value) {
+  return String(value || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean).length;
+}
+
+function managementNumberSummary(order, value) {
+  const count = managementNumberCount(value);
+  if (!count) return "미등록";
+  const total = Number(order.quantity || 0);
+  return total > 0 ? `${count}/${total}개 입력` : `${count}개 입력`;
+}
+
+function setManualOrderMode(order) {
+  const form = $("#manual-order-form");
+  const details = $("#manual-order");
+  const summary = $("#manual-order-summary");
+  const submit = $("#manual-order-submit");
+  const editingId = order?.id || "";
+  state.editingOrderId = editingId || null;
+  form.elements.editOrderId.value = editingId;
+  if (order) {
+    form.elements.orderNumber.readOnly = true;
+    form.elements.orderedAt.readOnly = true;
+    form.elements.orderNumber.value = order.orderNumber || "";
+    form.elements.orderedAt.value = String(order.orderedAt || "").replace(" ", "T").slice(0, 16);
+    form.elements.channel.value = String(order.channel || "").toLowerCase().includes("b2b")
+      ? "b2b"
+      : String(order.channel || "").toLowerCase().includes("b2c")
+        ? "b2c"
+        : String(order.channel || "").includes("방문")
+          ? "방문"
+          : "전화";
+    form.elements.productName.value = order.productName || "";
+    form.elements.optionName.value = order.optionName || "";
+    form.elements.productCode.value = order.productCode || "";
+    form.elements.quantity.value = order.quantity ?? 1;
+    form.elements.amount.value = order.amount ?? 0;
+    form.elements.recipient.value = order.recipient || "";
+    form.elements.phone.value = order.phone || "";
+    form.elements.postalCode.value = order.postalCode || "";
+    form.elements.address.value = order.address || "";
+    form.elements.deliveryMessage.value = order.deliveryMessage || "";
+    form.elements.softwareInspectionDone.checked = Boolean(order.softwareInspectionDone);
+    summary.textContent = `주문 수정: ${order.orderNumber}`;
+    submit.textContent = "수정 저장";
+    details.hidden = false;
+    details.open = true;
+    details.scrollIntoView({ behavior: "smooth", block: "start" });
+    showManualMessage(`${order.orderNumber} 주문 수정 모드`);
+    return;
+  }
+  summary.textContent = "수기 주문 등록";
+  submit.textContent = "주문 목록에 등록";
+  form.elements.orderNumber.readOnly = false;
+  form.elements.orderedAt.readOnly = false;
+  form.elements.channel.value = "전화";
+  form.elements.editOrderId.value = "";
+  form.elements.softwareInspectionDone.checked = false;
+  state.editingOrderId = null;
+  details.hidden = !(canManageOrders() || canEditOrders());
+}
+
+function resetManualOrderFormMode(message = "") {
+  $("#manual-order-form").reset();
+  setManualOrderMode(null);
+  if (message) showManualMessage(message);
+}
+
 function compareOrders(left, right) {
   const timeDifference = orderTime(left) - orderTime(right);
   if (timeDifference) return timeDifference;
@@ -121,7 +280,7 @@ function syncStatusCards() {
 }
 
 function syncChannelFilter() {
-  const preferredOrder = ["고도몰", "쿠팡", "카카오"];
+  const preferredOrder = ["b2b", "b2c", "전화", "방문", "고도몰", "쿠팡", "카카오"];
   const channels = [...new Set(state.orders.map((order) => order.channel).filter(Boolean))]
     .sort((left, right) => {
       const leftIndex = preferredOrder.indexOf(left);
@@ -137,12 +296,15 @@ function syncChannelFilter() {
 }
 
 function render() {
+  const managementInputState = captureOrderInputState();
+  // 주문 목록은 현재 필터 상태를 기준으로 매번 다시 그린다.
   syncStatusCards();
   const visible = filteredOrders().sort(compareOrders);
   $("#total-count").textContent = state.orders.length;
   $("#waiting-count").textContent = state.orders.filter((order) => orderStatusKey(order) === "waiting").length;
   $("#preparing-count").textContent = state.orders.filter((order) => orderStatusKey(order) === "preparing").length;
   $("#produced-count").textContent = state.orders.filter((order) => orderStatusKey(order) === "produced").length;
+  $("#inspection-count").textContent = state.orders.filter((order) => orderStatusKey(order) === "softwareInspection").length;
   $("#shipped-count").textContent = state.orders.filter((order) => orderStatusKey(order) === "shipped").length;
   $("#visible-count").textContent = `${visible.length}건 표시`;
   $("#empty").hidden = visible.length > 0;
@@ -150,20 +312,28 @@ function render() {
     const details = productDetails(order);
     const status = orderStatus(order);
     const channelClass = channelTone(order.channel);
+    const shippingNote = order.shippingDone
+      ? `${escapeHtml(order.shippingBy)} · ${formatDate(order.shippingAt)}`
+      : order.softwareInspectionDone
+        ? "출고 전"
+        : "SW 검수 후 출고";
     return `
     <tr data-id="${order.id}" class="${order.preparing ? "is-preparing" : ""} ${order.productionDone ? "is-produced" : ""}">
-      <td data-label="채널 / 주문"><div class="order-sequence">${index + 1}</div><div class="order-badges"><span class="channel channel--${channelClass}">${escapeHtml(order.channel)}</span><span class="status-badge status-badge--${status.tone}">${status.label}</span></div><span class="order-number-label">주문번호</span><strong class="order-number-value">${escapeHtml(order.orderNumber)}</strong><span class="order-no">${escapeHtml(order.orderedAt)}</span></td>
+      <td data-label="채널 / 주문"><div class="order-sequence">${index + 1}</div><div class="order-badges"><span class="channel channel--${channelClass}">${escapeHtml(order.channel)}</span><span class="status-badge status-badge--${status.tone}">${status.label}</span></div><span class="order-number-label">주문번호</span><strong class="order-number-value">${escapeHtml(order.orderNumber)}</strong><span class="order-no">${escapeHtml(order.orderedAt)}</span>${canEditOrders() && !order.shippingDone ? `<div class="order-actions"><button class="edit-order" type="button">주문 수정</button></div>` : ""}</td>
       <td data-label="상품 정보"><div class="product-info"><span class="product-label">상품명 + 옵션명</span><div class="product">${escapeHtml(order.productName)}</div>${details.registeredOption ? `<div class="registered-option"><span>등록옵션명</span><strong>${escapeHtml(details.registeredOption)}</strong></div>` : ""}${details.extras.length ? `<div class="extra-options"><span>추가 상품/옵션</span>${details.extras.map((option) => `<em>${escapeHtml(option)}</em>`).join("")}</div>` : ""}<div class="product-summary"><span>수량 <strong>${order.quantity}개</strong></span><span>결제금액 <strong>${formatAmount(order.amount)}원</strong></span></div></div></td>
-      <td data-label="배송지"><strong>${escapeHtml(order.recipient)}</strong> · ${escapeHtml(order.phone)}<div class="address">${escapeHtml(order.address)}</div><span class="meta">${escapeHtml(order.deliveryMessage)}</span></td>
+      <td data-label="배송지"><strong>${escapeHtml(order.recipient)}</strong> · ${escapeHtml(order.phone)}<div class="address">${escapeHtml(order.address)}</div><span class="meta">${escapeHtml(order.deliveryMessage)}</span>${shippingUpdatePanel(order)}</td>
       <td data-label="준비 중"><div class="check-card"><input class="preparing-check" type="checkbox" ${order.preparing ? "checked" : ""}><label>준비 중</label><small>${order.preparing ? `${escapeHtml(order.preparingBy)} · ${formatDate(order.preparingAt)}` : "작업자 미지정"}</small></div></td>
-      <td data-label="제품 관리번호"><div class="management-field"><input class="management-number" maxlength="100" placeholder="바코드 스캔" value="${escapeHtml(state.managementDrafts[order.id] ?? order.managementNumber)}"><button class="save-management" type="button">저장</button><small>${order.managementNumberBy ? `${escapeHtml(order.managementNumberBy)} · ${formatDate(order.managementNumberAt)}` : "미등록"}</small></div></td>
+      <td data-label="제품 관리번호"><div class="management-field"><div class="management-field__head"><span class="management-field__title">관리번호</span><span class="management-field__hint">한 줄에 1개씩</span></div><textarea class="management-number" rows="5" placeholder="ABC001&#10;ABC002&#10;ABC003">${escapeHtml(state.managementDrafts[order.id] ?? order.managementNumber)}</textarea><div class="management-field__actions"><button class="save-management" type="button">저장</button></div><small>${order.managementNumberBy ? `${escapeHtml(order.managementNumberBy)} · ${formatDate(order.managementNumberAt)} · ${managementNumberSummary(order, order.managementNumber)}` : managementNumberSummary(order, state.managementDrafts[order.id] ?? order.managementNumber)}</small></div></td>
       <td data-label="제작 완료"><div class="check-card"><input class="production-check" type="checkbox" ${order.productionDone ? "checked" : ""}><label>제작 완료</label><small>${order.productionDone ? `${escapeHtml(order.productionBy)} · ${formatDate(order.productionAt)}` : "담당자 미지정"}</small></div></td>
-      <td data-label="출고 처리"><div class="check-card"><input class="shipping-check" type="checkbox" ${order.shippingDone ? "checked" : ""}><label>출고 완료</label><small>${order.shippingDone ? `${escapeHtml(order.shippingBy)} · ${formatDate(order.shippingAt)}` : "출고 전"}</small>${canCancelOrder(order) ? `<button class="cancel-order" type="button">주문 취소</button>` : ""}</div></td>
+      <td data-label="SW 검수"><div class="check-card"><input class="software-inspection-check" type="checkbox" ${order.softwareInspectionDone ? "checked" : ""}><label>SW 검수</label><small>${order.softwareInspectionDone ? `${escapeHtml(order.softwareInspectionBy)} · ${formatDate(order.softwareInspectionAt)}` : "검수 전"}</small></div></td>
+      <td data-label="출고 처리"><div class="check-card"><input class="shipping-check" type="checkbox" ${order.shippingDone ? "checked" : ""}><label>출고 확인</label><small>${shippingNote}</small>${canCancelOrder(order) ? `<button class="cancel-order" type="button">주문 취소</button>` : ""}</div></td>
     </tr>`;
   }).join("");
+  restoreOrderInputState(managementInputState);
 }
 
 async function loadOrders() {
+  // 메인 주문 목록은 서버 기준 상태를 그대로 다시 가져온다.
   const response = await fetch("/api/orders");
   if (!response.ok) throw new Error("주문을 불러오지 못했습니다.");
   state.orders = await response.json();
@@ -185,13 +355,14 @@ function renderArchivedOrders() {
       <td><span class="channel channel--${channelTone(order.channel)}">${escapeHtml(order.channel)}</span><strong class="order-number-value">${escapeHtml(order.orderNumber)}</strong><span class="order-no">${escapeHtml(order.orderedAt)}</span></td>
       <td><div class="product-info"><div class="product">${escapeHtml(order.productName)}</div>${details.registeredOption ? `<div class="registered-option"><span>등록옵션명</span><strong>${escapeHtml(details.registeredOption)}</strong></div>` : ""}${details.extras.length ? `<div class="extra-options">${details.extras.map((option) => `<em>${escapeHtml(option)}</em>`).join("")}</div>` : ""}<div class="product-summary"><span>수량 <strong>${order.quantity}개</strong></span><span>결제금액 <strong>${formatAmount(order.amount)}원</strong></span></div></div></td>
       <td><strong>${escapeHtml(order.recipient)}</strong> · ${escapeHtml(order.phone)}<div class="address">${escapeHtml(order.address)}</div><span class="meta">${escapeHtml(order.deliveryMessage)}</span></td>
-      <td><strong>${escapeHtml(order.productionBy)}</strong><span class="meta">${formatDate(order.productionAt)}</span><span class="meta">관리번호 ${escapeHtml(order.managementNumber || "-")}</span></td>
+      <td><strong>${escapeHtml(order.productionBy)}</strong><span class="meta">${formatDate(order.productionAt)}</span><span class="meta">관리번호 ${escapeHtml(managementNumberSummary(order, order.managementNumber))}</span></td>
       <td><strong>${escapeHtml(order.shippingBy)}</strong><span class="meta">${formatDate(order.shippingAt)}</span></td>
     </tr>`;
   }).join("");
 }
 
 async function loadArchivedOrders() {
+  // 출고 고객 조회용 아카이브 목록은 별도 엔드포인트로 가져온다.
   const response = await fetch("/api/orders/archived");
   if (!response.ok) throw new Error("완료 주문을 불러오지 못했습니다.");
   state.archivedOrders = await response.json();
@@ -216,6 +387,7 @@ function renderCancelledOrders() {
 }
 
 async function loadCancelledOrders() {
+  // 취소 목록은 취소 사유까지 포함해 별도로 읽어온다.
   const response = await fetch("/api/orders/cancelled");
   if (!response.ok) throw new Error("취소 주문을 불러오지 못했습니다.");
   state.cancelledOrders = await response.json();
@@ -251,7 +423,7 @@ function renderAsHistory() {
       <div class="customer-shipments">${orders.map((order) => `<div class="customer-shipment">
         <div><span class="customer-shipment-label">주문 / 출고</span><strong>${escapeHtml(order.orderNumber)}</strong><span class="meta">주문 ${escapeHtml(order.orderedAt)}</span><span class="meta">출고 ${formatDate(order.shippingAt)}</span></div>
         <div><span class="customer-shipment-label">출고 제품</span><strong class="product">${escapeHtml(order.productName)}</strong><span class="meta">${escapeHtml(order.optionName)}</span></div>
-        <div><span class="customer-shipment-label">제품 식별</span><span class="management-badge">관리번호 ${escapeHtml(order.managementNumber || "미등록")}</span><span class="meta">상품코드 ${escapeHtml(order.productCode || "-")}</span></div>
+        <div><span class="customer-shipment-label">제품 식별</span><span class="management-badge">관리번호 ${escapeHtml(managementNumberSummary(order, order.managementNumber))}</span><span class="meta">상품코드 ${escapeHtml(order.productCode || "-")}</span></div>
         <div><span class="customer-shipment-label">출고 처리</span><strong>${escapeHtml(order.shippingBy || "담당자 미등록")}</strong><span class="meta">${formatDate(order.shippingAt)}</span></div>
       </div>`).join("")}</div>
     </article>`;
@@ -259,6 +431,7 @@ function renderAsHistory() {
 }
 
 async function loadAsHistory() {
+  // AS 이력은 고객 단위로 묶어 보여주기 위해 별도 목록을 유지한다.
   const response = await fetch("/api/orders/as-history");
   if (!response.ok) throw new Error("고객 출고 이력을 불러오지 못했습니다.");
   state.asHistoryOrders = await response.json();
@@ -279,8 +452,20 @@ async function cancelOrder(row) {
   const result = await response.json();
   if (!response.ok) return showMessage(result.error || "주문을 취소하지 못했습니다.", true);
   state.orders = state.orders.filter((item) => item.id !== result.id);
+  state.cancelledOrders = [result, ...state.cancelledOrders.filter((item) => item.id !== result.id)];
+  state.asHistoryOrders = state.asHistoryOrders.filter((item) => item.id !== result.id);
   delete state.managementDrafts[result.id];
+  delete state.orderDrafts[result.id];
   syncChannelFilter();
+  // 출고 고객 조회가 열려 있으면, 취소 반영 결과를 다시 읽어 화면과 맞춘다.
+  if (!$("#shipping-customers-view").hidden) {
+    await loadArchivedOrders().catch(() => {});
+    if (asHistoryRoles.has(currentRole())) {
+      await loadAsHistory().catch(() => {});
+    }
+  }
+  if (!$("#cancelled-view").hidden) renderCancelledOrders();
+  if (!$("#shipping-customers-view").hidden) renderAsHistory();
   showMessage(`${result.orderNumber} 주문을 취소했습니다.`);
   render();
 }
@@ -289,6 +474,11 @@ async function updateOrder(row, action, checked) {
   try {
     const body = { action, checked, worker: worker() };
     if (action === "managementNumber") body.managementNumber = row.querySelector(".management-number").value;
+    if (action === "details") {
+      const draft = state.orderDrafts[row.dataset.id];
+      if (!draft) throw new Error("수정할 내용을 먼저 입력하세요.");
+      body.fields = draft;
+    }
     const response = await fetch(`/api/orders/${row.dataset.id}`, { method:"PATCH", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body) });
     const result = await response.json();
     if (!response.ok) {
@@ -301,7 +491,15 @@ async function updateOrder(row, action, checked) {
     const index = state.orders.findIndex((order) => order.id === result.id);
     if (index >= 0) state.orders[index] = result;
     if (action === "managementNumber") delete state.managementDrafts[result.id];
-    showMessage(`${result.orderNumber} 주문이 저장되었습니다.`);
+    if (action === "details") delete state.orderDrafts[result.id];
+    // 출고 최종 상태가 바뀌면 출고 고객 조회와 AS 이력도 함께 갱신한다.
+    if (action === "shipping" && !$("#shipping-customers-view").hidden) {
+      await loadArchivedOrders().catch(() => {});
+      if (asHistoryRoles.has(currentRole())) {
+        await loadAsHistory().catch(() => {});
+      }
+    }
+    showMessage(action === "applyShippingUpdate" ? `${result.orderNumber} 배송지 변경을 반영했습니다.` : `${result.orderNumber} 주문이 저장되었습니다.`);
     render();
   } catch (error) {
     showMessage(`서버 연결 오류: ${error.message}. 주문 상태를 다시 불러왔습니다.`, true);
@@ -347,6 +545,7 @@ async function initializeAuth() {
   createRoleSelect.innerHTML = roleOptions("worker", state.user.role === "developer" ? roleOrder.slice(2) : roleOrder);
   updateAccessUI();
   showWorkspaceView("orders-view");
+  resetOrderFilters();
   await loadOrders();
 }
 
@@ -360,6 +559,7 @@ $("#home-button").addEventListener("click", () => {
   $("#search").value = "";
   $("#status-filter").value = "all";
   $("#manual-order").open = false;
+  resetManualOrderFormMode();
   syncChannelFilter();
   render();
   window.scrollTo({ top: 0, behavior: "smooth" });
@@ -393,8 +593,13 @@ $("#logout-button").addEventListener("click", async () => {
   state.archivedOrders = [];
   state.cancelledOrders = [];
   state.asHistoryOrders = [];
+  resetOrderFilters();
   render();
   await initializeAuth();
+});
+
+$("#theme-toggle").addEventListener("click", () => {
+  applyTheme(document.body.dataset.theme === "dark" ? "light" : "dark");
 });
 
 $("#user-form").addEventListener("submit", async (event) => {
@@ -458,22 +663,33 @@ $("#manual-order-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = new FormData(event.target);
   const payload = Object.fromEntries(form.entries());
+  payload.softwareInspectionDone = event.target.elements.softwareInspectionDone.checked;
   payload.worker = worker();
   try {
-    const response = await fetch("/api/orders/manual", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload) });
+    const editOrderId = String(payload.editOrderId || "").trim();
+    delete payload.editOrderId;
+    const response = editOrderId
+      ? await fetch(`/api/orders/${editOrderId}`, { method:"PATCH", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ action:"details", fields:payload, worker:worker() }) })
+      : await fetch("/api/orders/manual", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload) });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error);
     event.target.reset();
     event.target.elements.quantity.value = "1";
     event.target.elements.amount.value = "0";
-    showManualMessage(`${result.orderNumber} 수기 주문을 등록했습니다.`);
+    resetManualOrderFormMode(editOrderId ? `${result.orderNumber} 주문을 수정했습니다.` : `${result.orderNumber} 수기 주문을 등록했습니다.`);
     await loadOrders();
+    if (!$("#shipping-customers-view").hidden) {
+      await loadArchivedOrders().catch(() => {});
+      if (asHistoryRoles.has(currentRole())) {
+        await loadAsHistory().catch(() => {});
+      }
+    }
   } catch (error) { showManualMessage(error.message, true); }
 });
 $("#export-button").addEventListener("click", async () => {
   const button = $("#export-button");
   button.disabled = true;
-  showMessage("새로 출고 완료된 주문의 엑셀을 만들고 있습니다.");
+    showMessage("새로 출고 확인된 주문의 엑셀을 만들고 있습니다.");
   try {
     const response = await fetch("/api/export/shipped", { method:"POST" });
     if (!response.ok) {
@@ -493,6 +709,12 @@ $("#export-button").addEventListener("click", async () => {
     link.remove();
     URL.revokeObjectURL(url);
     await loadOrders();
+    if (!$("#shipping-customers-view").hidden) {
+      await loadArchivedOrders().catch(() => {});
+      if (asHistoryRoles.has(currentRole())) {
+        await loadAsHistory().catch(() => {});
+      }
+    }
     showMessage("새 출고 건을 엑셀로 저장하고 출고고객조회로 이동했습니다. 다음 엑셀에는 다시 포함되지 않습니다.");
   } catch (error) {
     showMessage(error.message, true);
@@ -504,23 +726,46 @@ $("#orders-body").addEventListener("change", (event) => {
   const row = event.target.closest("tr");
   if (event.target.classList.contains("preparing-check")) updateOrder(row, "preparing", event.target.checked);
   if (event.target.classList.contains("production-check")) updateOrder(row, "production", event.target.checked);
+  if (event.target.classList.contains("software-inspection-check")) updateOrder(row, "softwareInspection", event.target.checked);
   if (event.target.classList.contains("shipping-check")) updateOrder(row, "shipping", event.target.checked);
 });
 $("#orders-body").addEventListener("click", (event) => {
   const cancelButton = event.target.closest(".cancel-order");
   if (cancelButton) return cancelOrder(cancelButton.closest("tr"));
+  const editButton = event.target.closest(".edit-order");
+  if (editButton) {
+    const order = state.orders.find((item) => item.id === editButton.closest("tr").dataset.id);
+    if (order) setManualOrderMode(order);
+    return;
+  }
   const button = event.target.closest(".save-management");
   if (button) updateOrder(button.closest("tr"), "managementNumber", true);
+  const shippingUpdateButton = event.target.closest(".apply-shipping-update");
+  if (shippingUpdateButton) updateOrder(shippingUpdateButton.closest("tr"), "applyShippingUpdate", true);
 });
 $("#orders-body").addEventListener("input", (event) => {
-  if (!event.target.classList.contains("management-number")) return;
   const row = event.target.closest("tr");
-  state.managementDrafts[row.dataset.id] = event.target.value;
+  if (!row) return;
+  if (event.target.classList.contains("management-number")) {
+    state.managementDrafts[row.dataset.id] = event.target.value;
+  }
+  if (event.target.classList.contains("order-edit-field")) {
+    const field = event.target.dataset.field;
+    if (!field) return;
+    state.orderDrafts[row.dataset.id] ||= {};
+    state.orderDrafts[row.dataset.id][field] = event.target.value;
+  }
 });
 $("#orders-body").addEventListener("keydown", (event) => {
   if (event.key === "Enter" && event.target.classList.contains("management-number")) {
+    if (!event.ctrlKey && !event.metaKey) return;
     event.preventDefault();
     updateOrder(event.target.closest("tr"), "managementNumber", true);
+    return;
+  }
+  if (event.key === "Enter" && event.target.classList.contains("order-edit-field")) {
+    event.preventDefault();
+    updateOrder(event.target.closest("tr"), "details", true);
   }
 });
 $("#upload-form").addEventListener("submit", async (event) => {
@@ -535,7 +780,8 @@ $("#upload-form").addEventListener("submit", async (event) => {
     const response = await fetch("/api/import", { method:"POST", body:data });
     const result = await response.json();
     if (!response.ok) return showMessage(result.error || "파일을 가져오지 못했습니다.", true);
-    showMessage(`${result.added}건 추가, 중복 ${result.duplicates}건 제외${result.errors.length ? `\n일부 오류: ${result.errors.join(", ")}` : ""}`);
+    const updates = Number(result.shippingUpdates || 0);
+    showMessage(`${result.added}건 추가, 중복 ${result.duplicates}건 제외${updates ? `, 배송지 변경 ${updates}건 감지` : ""}${result.errors.length ? `\n일부 오류: ${result.errors.join(", ")}` : ""}`);
     event.target.reset();
     $("#selected-files").textContent = "선택된 파일 없음";
     await loadOrders();
