@@ -151,7 +151,7 @@
 | 보안 | 로그인, 회원가입, PBKDF2 비밀번호 해시, 세션 토큰, 로그인 실패 제한 |
 | 권한 | owner, developer, as_manager, sales_manager, md, worker 역할 분리 |
 | 감사 로그 | 로그인, 주문 변경, 출고 처리 등 주요 이벤트 기록 |
-| 운영 자동화 | Windows Batch/PowerShell 실행, 종료, 서버 제어, 24시간 워치독 스크립트 |
+| 운영 자동화 | Windows Batch/PowerShell 실행, 종료, 서버 제어 콘솔, 실시간 로그 확인, 24시간 워치독 스크립트 |
 | 데이터 보호 | 실제 주문/회원/감사 로그는 Git 제외, 로컬 JSON과 백업으로 관리 |
 
 ## 업무 흐름
@@ -200,6 +200,32 @@
 ## 실행 방법
 
 Python 3.12 이상이 설치된 Windows 환경에서 실행합니다.
+
+운영자가 가장 쉽게 사용할 수 있는 실행 방식은 통합 운영 콘솔입니다.
+
+```bat
+SERVER_CONTROL.bat
+```
+
+`SERVER_CONTROL.bat`는 관리자 권한으로 다시 실행된 뒤 서비스 상태를 보여주고, 번호 선택 방식으로 서버를 제어합니다.
+
+| 메뉴 | 기능 |
+| --- | --- |
+| `1` | 서비스 시작 |
+| `2` | 서비스 중지 |
+| `3` | 서비스 재시작 |
+| `4` | 상태 새로고침 |
+| `5` | access log 실시간 확인 |
+| `6` | error log 실시간 확인 |
+| `7` | watchdog log 실시간 확인 |
+| `8` | 브라우저에서 서비스 열기 |
+| `9` | 애플리케이션 폴더 열기 |
+| `D` | quick diagnostics 실행 |
+| `0` | 운영 콘솔 종료 |
+
+quick diagnostics는 `/api/health` 응답과 TCP 3000 포트 리스닝 프로세스를 확인해 서버가 정상 기동 중인지 빠르게 점검합니다.
+
+개별 스크립트로 직접 실행할 수도 있습니다.
 
 ```powershell
 .\start-server.ps1
@@ -271,6 +297,9 @@ order-workflow-sample/
 ├─ docs/images/         # 실제 운영 화면 캡처
 ├─ deploy/              # Linux 서비스 예시
 ├─ tools/               # 운영 보조 스크립트
+├─ SERVER_CONTROL.bat   # Windows 통합 운영 콘솔
+├─ server-control.ps1   # 서비스 제어 PowerShell 스크립트
+├─ server-watchdog.ps1  # 장시간 실행 감시 스크립트
 ├─ start-server.ps1
 ├─ stop-server.ps1
 └─ README.md
