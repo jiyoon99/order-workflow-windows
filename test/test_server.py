@@ -1,4 +1,4 @@
-import http.client
+﻿import http.client
 import io
 import json
 import os
@@ -99,6 +99,41 @@ class OrderSortingTests(unittest.TestCase):
         added, _ = server.new_unique_orders(existing, imported)
         self.assertEqual([order["orderNumber"] for order in added], ["1", "3"])
 
+    def test_allows_reimport_of_cancelled_order(self):
+        existing = [{
+            "id": "cancelled-order",
+            "importKey": "스마트스토어:ORDER-1:PRODUCT-1",
+            "orderNumber": "ORDER-1",
+            "channel": "스마트스토어",
+            "recipient": "홍길동",
+            "phone": "010-1234-5678",
+            "productName": "노트북",
+            "optionName": "기본형",
+            "quantity": 1,
+            "amount": 100000,
+            "address": "서울시 중구",
+            "cancelledAt": "2026-07-28T01:00:00+00:00",
+        }]
+        imported = [{
+            "id": "repeat-order",
+            "importKey": "스마트스토어:ORDER-1:PRODUCT-1",
+            "orderNumber": "ORDER-1",
+            "channel": "스마트스토어",
+            "recipient": "홍길동",
+            "phone": "010-1234-5678",
+            "productName": "노트북",
+            "optionName": "기본형",
+            "quantity": 1,
+            "amount": 100000,
+            "address": "서울시 중구",
+        }]
+
+        added, shipping_updates = server.new_unique_orders(existing, imported)
+
+        self.assertEqual([order["id"] for order in added], ["repeat-order"])
+        self.assertEqual(shipping_updates, 0)
+        self.assertEqual(existing[0]["cancelledAt"], "2026-07-28T01:00:00+00:00")
+
     def test_ignores_partial_content_when_building_dedupe_key(self):
         existing = [{
             "importKey": "first-import",
@@ -118,6 +153,160 @@ class OrderSortingTests(unittest.TestCase):
         }]
         added, _ = server.new_unique_orders(existing, imported)
         self.assertEqual([order["orderNumber"] for order in added], ["ORDER-2"])
+
+    def test_synthetic_collection_numbers_use_content_dedupe(self):
+        existing = [{
+            "importKey": "first-import",
+            "orderNumber": "수집-20E7A87FE0",
+            "channel": "쿠팡",
+            "orderedAt": "2026-06-23 16:29",
+            "recipient": "홍길동",
+            "productName": "노트북",
+            "optionName": "기본형",
+            "quantity": 1,
+            "amount": 0,
+            "address": "",
+        }]
+        imported = [{
+            "importKey": "second-import",
+            "orderNumber": "수집-F99A7FF630",
+            "channel": "쿠팡",
+            "orderedAt": "2026-06-23 16:29",
+            "recipient": " 홍길동 ",
+            "productName": "노트북",
+            "optionName": "기본형",
+            "quantity": 1,
+            "amount": 100000,
+            "address": "",
+        }]
+        added, _ = server.new_unique_orders(existing, imported)
+        self.assertEqual(added, [])
+        self.assertEqual(existing[0]["amount"], 100000)
+
+    def test_synthetic_collection_numbers_keep_repeat_orders_on_different_order_time(self):
+        existing = [{
+            "importKey": "first-import",
+            "orderNumber": "수집-20E7A87FE0",
+            "channel": "쿠팡",
+            "orderedAt": "2026-06-23 16:29",
+            "recipient": "홍길동",
+            "productName": "노트북",
+            "optionName": "기본형",
+            "quantity": 1,
+            "amount": 100000,
+            "address": "",
+        }]
+        imported = [{
+            "importKey": "second-import",
+            "orderNumber": "수집-F99A7FF630",
+            "channel": "쿠팡",
+            "orderedAt": "2026-06-24 16:29",
+            "recipient": " 홍길동 ",
+            "productName": "노트북",
+            "optionName": "기본형",
+            "quantity": 1,
+            "amount": 100000,
+            "address": "",
+        }]
+        added, _ = server.new_unique_orders(existing, imported)
+        self.assertEqual([order["orderNumber"] for order in added], ["수집-F99A7FF630"])
+
+    def test_coupang_delivery_list_dedupes_against_collected_synthetic_order(self):
+        existing = [{
+            "id": "existing",
+            "importKey": "주문수집:쿠팡:수집-D1EA1C9AB6",
+            "orderNumber": "수집-D1EA1C9AB6",
+            "channel": "쿠팡",
+            "orderedAt": "2026.07.04 09:43",
+            "recipient": "윤여운",
+            "phone": "",
+            "postalCode": "",
+            "address": "",
+            "productName": "NT371B5M_i7-7_내장 AA급2 / 단일색상 NT371B5L 512GB 16GB WIN11 Home",
+            "optionName": "NT371B5M_i7-7_내장 AA급2",
+            "productCode": "NT371B5M_i7-7_내장 AA급2",
+            "quantity": 1,
+            "amount": 0,
+            "productionDone": True,
+            "softwareInspectionDone": True,
+            "shippingDone": False,
+        }]
+        imported = [{
+            "id": "incoming",
+            "importKey": "쿠팡:19101391072468:95077891064",
+            "orderNumber": "19101391072468",
+            "channel": "쿠팡",
+            "orderedAt": "2026-07-04 09:43:23",
+            "recipient": "윤여운",
+            "phone": "0502-1829-6350",
+            "postalCode": "05350",
+            "address": "서울특별시 강동구",
+            "productName": "NT371B5M_i7-7_내장 AA급2",
+            "optionName": "단일색상 NT371B5L 512GB 16GB WIN11 Home",
+            "productCode": "95077891064",
+            "quantity": 1,
+            "amount": 460000,
+            "shippingDone": False,
+        }]
+        added, shipping_updates = server.new_unique_orders(existing, imported)
+        self.assertEqual(added, [])
+        self.assertEqual(shipping_updates, 0)
+        self.assertTrue(existing[0]["softwareInspectionDone"])
+        self.assertEqual(existing[0]["phone"], "0502-1829-6350")
+        self.assertEqual(existing[0]["postalCode"], "05350")
+        self.assertEqual(existing[0]["amount"], 460000)
+
+    def test_cleanup_duplicate_orders_keeps_progress_and_merges_details(self):
+        orders = [
+            {
+                "id": "checked",
+                "importKey": "주문수집:쿠팡:수집-D1EA1C9AB6",
+                "orderNumber": "수집-D1EA1C9AB6",
+                "channel": "쿠팡",
+                "orderedAt": "2026.07.04 09:43",
+                "recipient": "윤여운",
+                "phone": "",
+                "postalCode": "",
+                "address": "",
+                "productName": "NT371B5M_i7-7_내장 AA급2 / 단일색상 NT371B5L 512GB 16GB WIN11 Home",
+                "optionName": "NT371B5M_i7-7_내장 AA급2",
+                "productCode": "NT371B5M_i7-7_내장 AA급2",
+                "quantity": 1,
+                "amount": 0,
+                "productionDone": True,
+                "softwareInspectionDone": True,
+                "shippingDone": False,
+                "createdAt": "2026-07-06T00:14:48+00:00",
+            },
+            {
+                "id": "duplicate",
+                "importKey": "쿠팡:19101391072468:95077891064",
+                "orderNumber": "19101391072468",
+                "channel": "쿠팡",
+                "orderedAt": "2026-07-04 09:43:23",
+                "recipient": "윤여운",
+                "phone": "0502-1829-6350",
+                "postalCode": "05350",
+                "address": "서울특별시 강동구",
+                "productName": "NT371B5M_i7-7_내장 AA급2",
+                "optionName": "단일색상 NT371B5L 512GB 16GB WIN11 Home",
+                "productCode": "95077891064",
+                "quantity": 1,
+                "amount": 460000,
+                "productionDone": False,
+                "softwareInspectionDone": False,
+                "shippingDone": False,
+                "createdAt": "2026-07-06T04:12:50+00:00",
+            },
+        ]
+        result = server.cleanup_duplicate_orders(orders, "2026-07-06T05:00:00+00:00")
+        self.assertEqual(result["removed"], 1)
+        self.assertEqual(len(orders), 1)
+        self.assertEqual(orders[0]["id"], "checked")
+        self.assertEqual(orders[0]["orderNumber"], "19101391072468")
+        self.assertTrue(orders[0]["softwareInspectionDone"])
+        self.assertEqual(orders[0]["phone"], "0502-1829-6350")
+        self.assertEqual(orders[0]["amount"], 460000)
 
     def test_requires_matching_address_for_content_based_duplicates(self):
         existing = [{
@@ -214,6 +403,40 @@ class OrderSortingTests(unittest.TestCase):
                 "address": "서울시 강남구",
             }
         ]
+        added, _ = server.new_unique_orders(existing, imported)
+        self.assertEqual(added, [])
+
+    def test_removes_exact_duplicate_even_with_different_real_order_number(self):
+        existing = [{
+            "importKey": "first-import",
+            "orderNumber": "ORDER-1",
+            "channel": "고도몰",
+            "orderedAt": "2026-07-02 09:10",
+            "recipient": "홍길동",
+            "phone": "010-1111-2222",
+            "postalCode": "12345",
+            "address": "서울시 강남구",
+            "productName": "노트북",
+            "optionName": "기본형",
+            "quantity": 1,
+            "amount": 100000,
+            "deliveryMessage": "문 앞",
+        }]
+        imported = [{
+            "importKey": "second-import",
+            "orderNumber": "ORDER-2",
+            "channel": "고도몰",
+            "orderedAt": "2026-07-02 09:10",
+            "recipient": "홍길동",
+            "phone": "01011112222",
+            "postalCode": "12345",
+            "address": "서울시 강남구",
+            "productName": "노트북",
+            "optionName": "기본형",
+            "quantity": 1,
+            "amount": 100000,
+            "deliveryMessage": "문 앞",
+        }]
         added, _ = server.new_unique_orders(existing, imported)
         self.assertEqual(added, [])
 
@@ -339,13 +562,54 @@ class OrderSortingTests(unittest.TestCase):
             finally:
                 server.DATA_FILE = original
 
+    def test_collection_date_lookup_includes_archived_and_cancelled_orders(self):
+        with tempfile.TemporaryDirectory() as directory:
+            original = server.DATA_FILE
+            try:
+                server.DATA_FILE = Path(directory) / "orders.json"
+                server.DATA_FILE.write_text(json.dumps([
+                    {
+                        "id": "active", "importKey": "active", "orderNumber": "DATE-001",
+                        "orderedAt": "2026-06-30 09:00:00", "createdAt": "2026-06-30T00:10:00+09:00",
+                    },
+                    {
+                        "id": "archived", "importKey": "archived", "orderNumber": "DATE-002",
+                        "orderedAt": "2026-06-30 10:00:00", "createdAt": "2026-06-30T01:10:00+09:00",
+                        "shippingDone": True, "archivedAt": "2026-06-30T05:00:00+00:00",
+                    },
+                    {
+                        "id": "cancelled", "importKey": "cancelled", "orderNumber": "DATE-003",
+                        "orderedAt": "2026-06-30 11:00:00", "createdAt": "2026-06-30T02:10:00+09:00",
+                        "cancelledAt": "2026-06-30T05:30:00+00:00",
+                    },
+                    {
+                        "id": "other-day", "importKey": "other-day", "orderNumber": "DATE-004",
+                        "orderedAt": "2026-07-01 09:00:00", "createdAt": "2026-07-01T00:10:00+09:00",
+                    },
+                ], ensure_ascii=False), encoding="utf-8")
+
+                found = server.orders_collected_on("2026-06-30")
+
+                self.assertEqual([order["id"] for order in found], ["active", "archived", "cancelled"])
+                with self.assertRaises(ValueError):
+                    server.orders_collected_on("2026-6-30")
+            finally:
+                server.DATA_FILE = original
+
 
 class ServerFlowTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.temp = tempfile.TemporaryDirectory()
+        cls.original_data_file = server.DATA_FILE
+        cls.original_users_file = server.USERS_FILE
+        cls.original_audit_file = server.AUDIT_FILE
+        cls.original_notice_file = server.NOTICE_FILE
+        cls.original_auth = server.AUTH
         server.DATA_FILE = Path(cls.temp.name) / "orders.json"
         server.USERS_FILE = Path(cls.temp.name) / "users.json"
+        server.AUDIT_FILE = Path(cls.temp.name) / "audit.jsonl"
+        server.NOTICE_FILE = Path(cls.temp.name) / "login-notice.json"
         server.AUTH = AuthStore(server.USERS_FILE)
         cls.cookie = ""
         cls.httpd = server.OrderHTTPServer(("127.0.0.1", 0), server.Handler)
@@ -362,6 +626,11 @@ class ServerFlowTests(unittest.TestCase):
         cls.httpd.server_close()
         cls.thread.join()
         cls.temp.cleanup()
+        server.DATA_FILE = cls.original_data_file
+        server.USERS_FILE = cls.original_users_file
+        server.AUDIT_FILE = cls.original_audit_file
+        server.NOTICE_FILE = cls.original_notice_file
+        server.AUTH = cls.original_auth
 
     @classmethod
     def request_raw(cls, method, path, body=None, headers=None):
@@ -391,6 +660,57 @@ class ServerFlowTests(unittest.TestCase):
     def logout(self):
         return self.request("POST", "/api/auth/logout")
 
+    def test_health_reports_operational_metadata(self):
+        status, _, content = self.request("GET", "/api/health")
+        payload = json.loads(content)
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["ok"])
+        self.assertIn("serverTime", payload)
+        self.assertIsInstance(payload["uptimeSeconds"], int)
+        self.assertIn("orders", payload["dataFiles"])
+        self.assertIn(payload["dataFiles"]["orders"]["status"], {"ok", "ready", "warning"})
+
+    def test_login_notice_can_only_be_updated_by_owner_and_md(self):
+        self.logout()
+        self.assertEqual(self.login("admin")[0], 200)
+        status, _, content = self.request("GET", "/api/login-notice")
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(content)["title"], "공지사항")
+
+        notice = json.dumps({
+            "title": "오늘의 공지",
+            "lead": "출고 전 확인",
+            "message": "관리번호를 다시 확인해 주세요.",
+        }, ensure_ascii=False).encode()
+        headers = {"Content-Type": "application/json", "Content-Length": str(len(notice))}
+        status, _, content = self.request("PATCH", "/api/login-notice", notice, headers)
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(content)["message"], "관리번호를 다시 확인해 주세요.")
+        self.assertEqual(server.read_login_notice()["title"], "오늘의 공지")
+
+        worker = json.dumps({
+            "username": "notice-worker",
+            "displayName": "공지 작업자",
+            "password": "password123",
+            "role": "worker",
+        }, ensure_ascii=False).encode()
+        worker_headers = {"Content-Type": "application/json", "Content-Length": str(len(worker))}
+        self.assertEqual(self.request("POST", "/api/users", worker, worker_headers)[0], 201)
+        md_user = json.dumps({
+            "username": "notice-md",
+            "displayName": "공지 MD",
+            "password": "password123",
+            "role": "md",
+        }, ensure_ascii=False).encode()
+        md_headers = {"Content-Type": "application/json", "Content-Length": str(len(md_user))}
+        self.assertEqual(self.request("POST", "/api/users", md_user, md_headers)[0], 201)
+        self.logout()
+        self.assertEqual(self.login("notice-worker")[0], 200)
+        self.assertEqual(self.request("PATCH", "/api/login-notice", notice, headers)[0], 403)
+        self.logout()
+        self.assertEqual(self.login("notice-md")[0], 200)
+        self.assertEqual(self.request("PATCH", "/api/login-notice", notice, headers)[0], 200)
+
     def test_business_role_permissions(self):
         for username, display_name, role in [
             ("developer-role", "개발자", "developer"),
@@ -404,6 +724,8 @@ class ServerFlowTests(unittest.TestCase):
         self.assertEqual(self.logout()[0], 200)
         self.assertEqual(self.login("developer-role")[0], 200)
         self.assertEqual(self.request("GET", "/api/users")[0], 200)
+        self.assertEqual(self.request("GET", "/api/orders/daily-stats")[0], 403)
+        self.assertEqual(self.request("GET", "/api/orders/by-date?date=2026-06-30")[0], 403)
         forbidden_owner = json.dumps({"username": "owner-by-dev", "displayName": "개발자생성", "password": "password123", "role": "owner"}).encode()
         self.assertEqual(self.request("POST", "/api/users", forbidden_owner, {"Content-Type": "application/json", "Content-Length": str(len(forbidden_owner))})[0], 403)
 
@@ -413,6 +735,8 @@ class ServerFlowTests(unittest.TestCase):
 
         self.assertEqual(self.logout()[0], 200)
         self.assertEqual(self.login("md-role")[0], 200)
+        self.assertEqual(self.request("GET", "/api/orders/as-history")[0], 200)
+        self.assertEqual(self.request("GET", "/api/orders/archived")[0], 200)
         self.assertEqual(self.request("GET", "/api/export/shipped")[0], 400)
 
         self.assertEqual(self.logout()[0], 200)
@@ -422,6 +746,48 @@ class ServerFlowTests(unittest.TestCase):
         self.assertEqual(self.request("POST", "/api/import")[0], 403)
         self.assertEqual(self.logout()[0], 200)
         self.assertEqual(self.login("admin")[0], 200)
+        self.assertEqual(self.request("GET", "/api/orders/daily-stats")[0], 200)
+        self.assertEqual(self.request("GET", "/api/orders/by-date?date=2026-06-30")[0], 200)
+
+    def test_duplicate_cleanup_endpoint_is_limited_to_owner_and_md(self):
+        self.logout()
+        self.assertEqual(self.login("admin")[0], 200)
+        md_payload = json.dumps({"username": "dedupe-md", "displayName": "중복MD", "password": "password123", "role": "md"}).encode()
+        worker_payload = json.dumps({"username": "dedupe-worker", "displayName": "중복작업자", "password": "password123", "role": "worker"}).encode()
+        self.request("POST", "/api/users", md_payload, {"Content-Type": "application/json", "Content-Length": str(len(md_payload))})
+        self.request("POST", "/api/users", worker_payload, {"Content-Type": "application/json", "Content-Length": str(len(worker_payload))})
+        server.DATA_FILE.write_text(json.dumps([
+            {
+                "id": "checked", "importKey": "주문수집:쿠팡:수집-D1EA1C9AB6", "orderNumber": "수집-D1EA1C9AB6",
+                "channel": "쿠팡", "orderedAt": "2026.07.04 09:43", "recipient": "윤여운",
+                "productName": "NT371B5M_i7-7_내장 AA급2 / 단일색상 NT371B5L 512GB 16GB WIN11 Home",
+                "optionName": "NT371B5M_i7-7_내장 AA급2", "productCode": "NT371B5M_i7-7_내장 AA급2",
+                "quantity": 1, "amount": 0, "productionDone": True, "softwareInspectionDone": True,
+                "createdAt": "2026-07-06T00:14:48+00:00",
+            },
+            {
+                "id": "duplicate", "importKey": "쿠팡:19101391072468:95077891064", "orderNumber": "19101391072468",
+                "channel": "쿠팡", "orderedAt": "2026-07-04 09:43:23", "recipient": "윤여운",
+                "phone": "0502-1829-6350", "postalCode": "05350", "address": "서울특별시 강동구",
+                "productName": "NT371B5M_i7-7_내장 AA급2", "optionName": "단일색상 NT371B5L 512GB 16GB WIN11 Home",
+                "productCode": "95077891064", "quantity": 1, "amount": 460000,
+                "createdAt": "2026-07-06T04:12:50+00:00",
+            },
+        ], ensure_ascii=False), encoding="utf-8")
+
+        self.logout()
+        self.assertEqual(self.login("dedupe-worker")[0], 200)
+        self.assertEqual(self.request("POST", "/api/orders/dedupe")[0], 403)
+
+        self.logout()
+        self.assertEqual(self.login("dedupe-md")[0], 200)
+        status, _, content = self.request("POST", "/api/orders/dedupe")
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(content)["removed"], 1)
+        remaining = server.read_orders()
+        self.assertEqual([order["id"] for order in remaining], ["checked"])
+        self.assertEqual(remaining[0]["orderNumber"], "19101391072468")
+        self.assertTrue(remaining[0]["softwareInspectionDone"])
 
     def test_cancel_order_moves_it_out_of_active_orders(self):
         self.logout()
@@ -521,6 +887,26 @@ class ServerFlowTests(unittest.TestCase):
         self.assertIn(second_order["id"], cancelled_ids)
         self.assertIn(third_order["id"], cancelled_ids)
 
+        restore = json.dumps({"action": "restoreCancel"}).encode()
+        self.logout()
+        self.assertEqual(self.login("cancel-worker")[0], 200)
+        status, _, _ = self.request("PATCH", f"/api/orders/{order['id']}", restore, {"Content-Type": "application/json", "Content-Length": str(len(restore))})
+        self.assertEqual(status, 403)
+        self.logout()
+        self.assertEqual(self.login("admin")[0], 200)
+        status, _, content = self.request("PATCH", f"/api/orders/{order['id']}", restore, {"Content-Type": "application/json", "Content-Length": str(len(restore))})
+        self.assertEqual(status, 200)
+        restored = json.loads(content)
+        self.assertNotIn("cancelledAt", restored)
+        self.assertEqual(restored["restoredBy"], "관리자")
+        status, _, content = self.request("GET", "/api/orders")
+        self.assertIn(order["id"], [item["id"] for item in json.loads(content)])
+        status, _, content = self.request("GET", "/api/orders/cancelled")
+        self.assertNotIn(order["id"], [item["id"] for item in json.loads(content)])
+        recancel = json.dumps({"action": "cancel", "reason": "복구 테스트 원복"}).encode()
+        status, _, _ = self.request("PATCH", f"/api/orders/{order['id']}", recancel, {"Content-Type": "application/json", "Content-Length": str(len(recancel))})
+        self.assertEqual(status, 200)
+
         status, _, content = self.request("GET", "/api/orders/as-history")
         as_history_ids = [item["id"] for item in json.loads(content)]
         self.assertNotIn(third_order["id"], as_history_ids)
@@ -596,8 +982,9 @@ class ServerFlowTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(content)["managementNumber"], "PC-2026-0001")
         duplicate_management = json.dumps({"action": "managementNumber", "checked": True, "worker": "다른작업자", "managementNumber": "PC-2026-0001"}).encode()
-        status, _, _ = self.request("PATCH", f"/api/orders/{other_order['id']}", duplicate_management, {"Content-Type": "application/json", "Content-Length": str(len(duplicate_management))})
-        self.assertEqual(status, 409)
+        status, _, content = self.request("PATCH", f"/api/orders/{other_order['id']}", duplicate_management, {"Content-Type": "application/json", "Content-Length": str(len(duplicate_management))})
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(content)["managementNumber"], "PC-2026-0001")
         premature_shipping = json.dumps({"action": "shipping", "checked": True}).encode()
         status, _, _ = self.request("PATCH", f"/api/orders/{order['id']}", premature_shipping, {"Content-Type": "application/json", "Content-Length": str(len(premature_shipping))})
         self.assertEqual(status, 409)
@@ -614,6 +1001,8 @@ class ServerFlowTests(unittest.TestCase):
         update = json.dumps({"action": "shipping", "checked": True, "worker": "테스트작업자"}).encode()
         status, _, _ = self.request("PATCH", f"/api/orders/{order['id']}", update, {"Content-Type": "application/json", "Content-Length": str(len(update))})
         self.assertEqual(status, 200)
+        status, _, content = self.request("GET", "/api/orders")
+        self.assertIn(order["id"], [item["id"] for item in json.loads(content)])
         undo_production = json.dumps({"action": "production", "checked": False}).encode()
         status, _, _ = self.request("PATCH", f"/api/orders/{order['id']}", undo_production, {"Content-Type": "application/json", "Content-Length": str(len(undo_production))})
         self.assertEqual(status, 409)
@@ -647,10 +1036,13 @@ class ServerFlowTests(unittest.TestCase):
         self.assertEqual(archived[0]["orderNumber"], order["orderNumber"])
 
     def test_manual_phone_order(self):
+        self.logout()
+        self.assertEqual(self.login("admin")[0], 200)
         payload = json.dumps({
             "orderNumber": "TEL-001", "productName": "전화 주문 노트북", "optionName": "16GB",
             "quantity": 1, "amount": 250000, "recipient": "전화고객", "phone": "010-1234-5678",
             "address": "서울시 테스트구", "deliveryMessage": "문 앞", "worker": "접수자",
+            "orderedAt": "2026-07-03T14:25",
         }).encode()
         headers = {"Content-Type": "application/json", "Content-Length": str(len(payload))}
         status, _, content = self.request("POST", "/api/orders/manual", payload, headers)
@@ -658,8 +1050,68 @@ class ServerFlowTests(unittest.TestCase):
         order = json.loads(content)
         self.assertEqual(order["channel"], "전화")
         self.assertEqual(order["createdBy"], "관리자")
+        self.assertEqual(order["orderedAt"], "2026-07-03 14:25:00")
+        edit = json.dumps({"action": "details", "fields": {"orderedAt": "2026-07-04T09:10", "productName": order["productName"], "quantity": 1}}).encode()
+        status, _, content = self.request("PATCH", f"/api/orders/{order['id']}", edit, {"Content-Type": "application/json", "Content-Length": str(len(edit))})
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(content)["orderedAt"], "2026-07-04 09:10:00")
         status, _, _ = self.request("POST", "/api/orders/manual", payload, headers)
         self.assertEqual(status, 409)
+
+    def test_manual_product_exchange_order(self):
+        self.logout()
+        self.assertEqual(self.login("admin")[0], 200)
+        payload = json.dumps({
+            "orderNumber": "EXCHANGE-001", "channel": "제품 교환",
+            "productName": "교환 노트북", "quantity": 1,
+            "recipient": "교환고객", "memo": "기존 제품 회수 후 교환",
+        }).encode()
+        headers = {"Content-Type": "application/json", "Content-Length": str(len(payload))}
+
+        status, _, content = self.request("POST", "/api/orders/manual", payload, headers)
+
+        self.assertEqual(status, 201)
+        order = json.loads(content)
+        self.assertEqual(order["channel"], "제품 교환")
+        self.assertEqual(order["memo"], "기존 제품 회수 후 교환")
+
+    def test_management_number_can_be_reused_across_orders(self):
+        self.logout()
+        self.assertEqual(self.login("admin")[0], 200)
+        first_payload = json.dumps({
+            "orderNumber": "RETURN-REUSE-001", "productName": "반품 재출고 상품",
+            "quantity": 1, "amount": 10000, "recipient": "반품고객", "phone": "010-3333-0001",
+        }).encode()
+        headers = {"Content-Type": "application/json", "Content-Length": str(len(first_payload))}
+        status, _, content = self.request("POST", "/api/orders/manual", first_payload, headers)
+        self.assertEqual(status, 201)
+        first_order = json.loads(content)
+
+        management = json.dumps({"action": "managementNumber", "managementNumber": "RETURN-PC-001"}).encode()
+        status, _, content = self.request("PATCH", f"/api/orders/{first_order['id']}", management, {"Content-Type": "application/json", "Content-Length": str(len(management))})
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(content)["managementNumber"], "RETURN-PC-001")
+
+        second_payload = json.dumps({
+            "orderNumber": "RETURN-REUSE-002", "productName": "반품 재출고 상품",
+            "quantity": 1, "amount": 10000, "recipient": "반품고객", "phone": "010-3333-0001",
+        }).encode()
+        status, _, content = self.request("POST", "/api/orders/manual", second_payload, {"Content-Type": "application/json", "Content-Length": str(len(second_payload))})
+        self.assertEqual(status, 201)
+        second_order = json.loads(content)
+
+        status, _, content = self.request("PATCH", f"/api/orders/{second_order['id']}", management, {"Content-Type": "application/json", "Content-Length": str(len(management))})
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(content)["managementNumber"], "RETURN-PC-001")
+
+        cancel = json.dumps({"action": "cancel", "reason": "반품 입고"}).encode()
+        status, _, content = self.request("PATCH", f"/api/orders/{first_order['id']}", cancel, {"Content-Type": "application/json", "Content-Length": str(len(cancel))})
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(content)["cancelReason"], "반품 입고")
+
+        status, _, content = self.request("PATCH", f"/api/orders/{second_order['id']}", management, {"Content-Type": "application/json", "Content-Length": str(len(management))})
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(content)["managementNumber"], "RETURN-PC-001")
 
     def test_manual_and_detail_edit_cannot_bypass_software_inspection_flow(self):
         payload = json.dumps({

@@ -1,8 +1,7 @@
-import sys
+﻿import sys
 import unittest
 import io
 import os
-import shutil
 import subprocess
 import tempfile
 import zipfile
@@ -11,7 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from excel import read_first_sheet, write_xlsx
+from excel import find_libreoffice_command, read_first_sheet, write_xlsx
 from importers import import_workbook
 
 COLLECTED_SAMPLE = Path(os.getenv("COLLECTED_SAMPLE_FILE", "test/fixtures/collected-orders.xlsx"))
@@ -42,6 +41,46 @@ class ImporterTests(unittest.TestCase):
         self.assertEqual(orders[0]["channel"], "쿠팡")
         self.assertEqual(orders[0]["recipient"], "정영희")
 
+    def test_imports_smartstore_order_and_converts_excel_date(self):
+        content = write_xlsx(
+            [
+                "상품주문번호", "주문번호", "판매채널", "수취인명", "수취인연락처1",
+                "통합배송지", "우편번호", "상품명", "옵션정보", "판매자 상품코드",
+                "수량", "최종 상품별 총 주문금액", "주문일시", "배송메세지",
+            ],
+            [[
+                "2026072814836311", "2026072837709401", "스마트스토어", "홍길동",
+                "010-1234-5678", "서울특별시 중구 세종대로 1", "04524", "테스트 노트북",
+                "A급 외관", "NOTEBOOK-1", "2", "360000", "46231.55195601852", "문 앞",
+            ]],
+        )
+        orders = import_workbook(content, "smartstore.xlsx")
+        self.assertEqual(len(orders), 1)
+        self.assertEqual(orders[0]["channel"], "스마트스토어")
+        self.assertEqual(orders[0]["orderNumber"], "2026072837709401")
+        self.assertEqual(orders[0]["orderedAt"], "2026-07-28 13:14:49")
+        self.assertEqual(orders[0]["productCode"], "NOTEBOOK-1")
+        self.assertEqual(orders[0]["quantity"], 2)
+        self.assertEqual(orders[0]["amount"], 360000)
+
+    def test_groups_smartstore_product_rows_by_order_number(self):
+        content = write_xlsx(
+            [
+                "상품주문번호", "주문번호", "판매채널", "수취인명", "상품명",
+                "옵션정보", "판매자 상품코드", "수량", "최종 상품별 총 주문금액", "주문일시",
+            ],
+            [
+                ["PRODUCT-1", "ORDER-1", "스마트스토어", "홍길동", "노트북", "A급", "PC-1", "1", "300000", "2026-08-05 09:00"],
+                ["PRODUCT-2", "ORDER-1", "스마트스토어", "홍길동", "메모리 추가", "16GB", "RAM-1", "1", "50000", "2026-08-05 09:00"],
+                ["PRODUCT-3", "ORDER-2", "스마트스토어", "김고객", "노트북", "S급", "PC-2", "1", "400000", "2026-08-05 09:10"],
+            ],
+        )
+        orders = import_workbook(content, "smartstore.xlsx")
+        self.assertEqual(len(orders), 2)
+        self.assertEqual(orders[0]["orderNumber"], "ORDER-1")
+        self.assertEqual(orders[0]["amount"], 350000)
+        self.assertIn("메모리 추가 / 16GB", orders[0]["optionName"])
+
     def test_exported_workbook_can_be_read(self):
         content = write_xlsx(["주문번호", "담당자"], [["100", "홍길동"]])
         self.assertEqual(read_first_sheet(content), [{"주문번호": "100", "담당자": "홍길동"}])
@@ -49,7 +88,8 @@ class ImporterTests(unittest.TestCase):
     def test_imports_legacy_xls_workbook(self):
         if os.getenv("RUN_LIBREOFFICE_TESTS") != "1":
             self.skipTest("RUN_LIBREOFFICE_TESTS=1일 때 실행합니다.")
-        if not shutil.which("libreoffice"):
+        libreoffice = find_libreoffice_command()
+        if not libreoffice:
             self.skipTest("LibreOffice가 없습니다.")
         with tempfile.TemporaryDirectory() as directory:
             temporary = Path(directory)
@@ -59,7 +99,7 @@ class ImporterTests(unittest.TestCase):
                 [["XLS-1", "구형 엑셀 상품", "홍길동", "2"]],
             ))
             result = subprocess.run(
-                ["libreoffice", "--headless", "--convert-to", "xls", "--outdir", directory, str(xlsx)],
+                [libreoffice, "--headless", "--convert-to", "xls", "--outdir", directory, str(xlsx)],
                 check=False,
                 capture_output=True,
                 timeout=30,
@@ -114,6 +154,74 @@ class ImporterTests(unittest.TestCase):
         self.assertEqual(orders[0]["orderNumber"], "MANUAL-1")
         self.assertEqual(orders[0]["recipient"], "홍길동")
         self.assertEqual(orders[0]["quantity"], 2)
+
+    def test_collected_order_uses_excel_order_number(self):
+        content = write_xlsx(
+            ["플랫폼", "주문번호", "주문일시", "상품명 + 옵션명", "등록옵션명", "수량", "총 상품결제금액", "수취인 이름"],
+            [["쿠팡", "CP-ORDER-1", "2026-06-12 12:00", "노트북 / 기본", "기본", "1", "390000", "홍길동"]],
+        )
+        orders = import_workbook(content, "collected.xlsx")
+        self.assertEqual(len(orders), 1)
+        self.assertEqual(orders[0]["channel"], "쿠팡")
+        self.assertEqual(orders[0]["orderNumber"], "CP-ORDER-1")
+        self.assertEqual(orders[0]["importKey"], "주문수집:쿠팡:CP-ORDER-1")
+
+    def test_collected_order_groups_repeated_order_number_rows(self):
+        content = write_xlsx(
+            ["플랫폼", "주문번호", "주문일시", "상품명 + 옵션명", "등록옵션명", "수량", "총 상품결제금액", "수취인 이름"],
+            [
+                ["쿠팡", "CP-ORDER-1", "2026-06-12 12:00", "노트북 / 기본", "기본", "1", "390000", "홍길동"],
+                ["쿠팡", "CP-ORDER-1", "2026-06-12 12:00", "무선마우스", "", "1", "0", "홍길동"],
+            ],
+        )
+        orders = import_workbook(content, "collected.xlsx")
+        self.assertEqual(len(orders), 1)
+        self.assertEqual(orders[0]["orderNumber"], "CP-ORDER-1")
+        self.assertIn("무선마우스", orders[0]["optionName"])
+
+    def test_collected_order_combines_repeated_same_product_into_quantity(self):
+        product = "LG전자 15.6인치 인텔 i5 초가성비 노트북 사무용 영상시청용 우측숫자키패드 탑재 윈도우11"
+        content = write_xlsx(
+            ["플랫폼", "주문번호", "주문일시", "상품명 + 옵션명", "등록옵션명", "수량", "총 상품결제금액", "수취인 이름"],
+            [
+                ["쿠팡", "CP-ORDER-2", "2026-06-12 12:00", product, "기본", "1", "390000", "나다은"],
+                ["쿠팡", "CP-ORDER-2", "2026-06-12 12:00", product, "", "1", "390000", "나다은"],
+            ],
+        )
+        orders = import_workbook(content, "collected.xlsx")
+        self.assertEqual(len(orders), 1)
+        self.assertEqual(orders[0]["productName"], product)
+        self.assertEqual(orders[0]["quantity"], 2)
+        self.assertEqual(orders[0]["optionName"], "기본")
+
+    def test_collected_order_counts_different_notebooks_and_keeps_both_product_lines(self):
+        samsung = "삼성전자 노트북7 프로 지포스 MX110 인텔 i7 9세대 15.6인치 대화면 FHD 지문인식 우측넘버패드 탑재 윈도우11\n제품등급선택 (필수): S급 외관 / S급 배터리"
+        lg = "LG전자 15.6인치 인텔 i5 초가성비 노트북 사무용 영상시청용 우측숫자키패드 탑재 윈도우11"
+        content = write_xlsx(
+            ["플랫폼", "주문번호", "주문일시", "상품명 + 옵션명", "등록옵션명", "수량", "총 상품결제금액", "수취인 이름"],
+            [
+                ["쿠팡", "CP-ORDER-3", "2026-06-12 12:00", samsung, "S급", "1", "390000", "나다은"],
+                ["쿠팡", "CP-ORDER-3", "2026-06-12 12:00", lg, "", "1", "390000", "나다은"],
+            ],
+        )
+        orders = import_workbook(content, "collected.xlsx")
+        self.assertEqual(len(orders), 1)
+        self.assertEqual(orders[0]["productName"], samsung)
+        self.assertEqual(orders[0]["quantity"], 2)
+        self.assertIn(lg, orders[0]["optionName"])
+
+    def test_collected_order_groups_repeated_recipient_rows_without_order_number(self):
+        content = write_xlsx(
+            ["플랫폼", "주문일시", "상품명 + 옵션명", "등록옵션명", "수량", "총 상품결제금액", "수취인 이름", "연락처", "주소"],
+            [
+                ["쿠팡", "2026-06-12 12:00", "노트북 / 기본", "기본", "1", "390000", "홍길동", "010-1111-2222", "서울시 강남구"],
+                ["쿠팡", "2026-06-12 12:00", "무선마우스", "", "1", "0", "홍길동", "010-1111-2222", "서울시 강남구"],
+            ],
+        )
+        orders = import_workbook(content, "collected.xlsx")
+        self.assertEqual(len(orders), 1)
+        self.assertTrue(orders[0]["orderNumber"].startswith("수집-"))
+        self.assertIn("무선마우스", orders[0]["optionName"])
 
     def test_imports_orders_with_alternate_date_and_address_headers(self):
         content = write_xlsx(

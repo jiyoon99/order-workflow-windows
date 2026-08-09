@@ -6,9 +6,25 @@ $HostAddress = if ($env:HOST) { $env:HOST } else { "0.0.0.0" }
 $LogFile = Join-Path $ProjectRoot "order-workflow-server.log"
 $ErrorLogFile = Join-Path $ProjectRoot "order-workflow-server.err.log"
 $PidFile = Join-Path $ProjectRoot "order-workflow-server.pid"
+$WatchdogPidFile = Join-Path $ProjectRoot "order-workflow-watchdog.pid"
+$StopFile = Join-Path $ProjectRoot "order-workflow-server.stop"
+
+function Remove-StalePidFile {
+    if (-not (Test-Path $PidFile)) {
+        return
+    }
+
+    try {
+        Remove-Item -LiteralPath $PidFile -Force -ErrorAction Stop
+    } catch {
+        Write-Host "Could not remove stale pid file. It will be overwritten after startup: $PidFile"
+        Write-Host "Original error: $($_.Exception.Message)"
+    }
+}
 
 function Resolve-Python {
     $knownPaths = @(
+        (Join-Path $ProjectRoot ".runtime\python\python.exe"),
         "$env:LOCALAPPDATA\Programs\Python\Python313\python.exe",
         "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe",
         "$env:LOCALAPPDATA\Programs\Python\Python311\python.exe"
@@ -40,14 +56,16 @@ function Resolve-Python {
     throw "Python 3.11+ is required. Install Python from https://www.python.org/downloads/windows/ and enable 'Add python.exe to PATH'."
 }
 
-if (Test-Path $PidFile) {
-    $existingPid = Get-Content $PidFile -ErrorAction SilentlyContinue
+if (Test-Path $WatchdogPidFile) {
+    $existingPid = Get-Content $WatchdogPidFile -ErrorAction SilentlyContinue
     if ($existingPid -and (Get-Process -Id $existingPid -ErrorAction SilentlyContinue)) {
         Write-Host "Server is already running: http://$HostAddress`:$Port"
         exit 0
     }
-    Remove-Item $PidFile -Force
+    Remove-Item -LiteralPath $WatchdogPidFile -Force -ErrorAction SilentlyContinue
 }
+Remove-StalePidFile
+Remove-Item -LiteralPath $StopFile -Force -ErrorAction SilentlyContinue
 
 $Python = Resolve-Python
 $env:PORT = $Port
@@ -62,18 +80,24 @@ if ($PathValue) {
 }
 
 $process = Start-Process `
-    -FilePath $Python `
-    -ArgumentList @("src/server.py") `
+    -FilePath "powershell.exe" `
+    -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (Join-Path $ProjectRoot "server-watchdog.ps1"), $Python) `
     -WorkingDirectory $ProjectRoot `
     -WindowStyle Hidden `
-    -RedirectStandardOutput $LogFile `
-    -RedirectStandardError $ErrorLogFile `
     -PassThru
 
-$process.Id | Set-Content -Path $PidFile -Encoding ASCII
+try {
+    $process.Id | Set-Content -Path $WatchdogPidFile -Encoding ASCII -ErrorAction Stop
+} catch {
+    Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+    Write-Host "Server started but pid file could not be updated: $PidFile"
+    Write-Host "Close any window or editor using this folder, then run this script again."
+    Write-Host "Original error: $($_.Exception.Message)"
+    exit 1
+}
 Start-Sleep -Seconds 1
 if ($process.HasExited) {
-    Remove-Item $PidFile -Force -ErrorAction SilentlyContinue
+    Remove-Item $WatchdogPidFile -Force -ErrorAction SilentlyContinue
     Write-Host "Server failed to start. See: $ErrorLogFile"
     exit 1
 }
@@ -92,12 +116,13 @@ for ($attempt = 0; $attempt -lt 10; $attempt++) {
     }
 }
 if (-not $healthy) {
+    Set-Content -LiteralPath $StopFile -Value "stop" -Encoding ASCII
     Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-    Remove-Item $PidFile -Force -ErrorAction SilentlyContinue
+    Remove-Item $WatchdogPidFile -Force -ErrorAction SilentlyContinue
     Write-Host "Server did not respond to health check: $HealthUrl"
     Write-Host "See: $ErrorLogFile"
     exit 1
 }
 Write-Host "Server started: http://$HostAddress`:$Port"
-Write-Host "Process ID: $($process.Id)"
+Write-Host "Watchdog process ID: $($process.Id)"
 Write-Host "Log file: $LogFile"

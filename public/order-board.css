@@ -1,0 +1,409 @@
+/* Order board refinements.
+   High-traffic order screen layout lives here instead of the base theme files. */
+
+.orders-heading {
+  gap: 12px !important;
+}
+
+.orders-heading-actions {
+  margin-left: auto !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-end !important;
+}
+
+.order-import-bar {
+  min-height: 50px;
+  padding: 10px 14px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--ops-border, #e4e7ec);
+  background: var(--ops-surface-alt, #f8fafc);
+}
+
+.order-import-bar #upload-form {
+  min-width: min(100%, 620px);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.order-import-bar #upload-form[hidden],
+.order-import-bar #dedupe-button[hidden] {
+  display: none !important;
+}
+
+.order-import-bar .selected-files {
+  max-width: min(42vw, 420px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.order-import-bar .import-maintenance-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+}
+
+.order-list-tools {
+  display: grid !important;
+  grid-template-columns: minmax(260px, 1.1fr) auto minmax(220px, 1fr) auto;
+}
+
+.order-list-search {
+  min-width: 0 !important;
+}
+
+.order-list-search input {
+  width: 100%;
+}
+
+.channel-filter {
+  min-width: 0;
+}
+
+.channel-filter button {
+  white-space: nowrap;
+}
+
+.bulk-action-bar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom-color: var(--ops-border-strong, #d0d5dd) !important;
+  background: #fffdf5 !important;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, .05);
+}
+
+.bulk-selection-group {
+  flex: 0 0 auto;
+}
+
+.bulk-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.bulk-actions button:disabled {
+  cursor: not-allowed;
+  opacity: .48;
+}
+
+.orders:not(.archived-orders) table {
+  min-width: 1480px;
+}
+
+.orders:not(.archived-orders) .col-channel {
+  width: 190px;
+}
+
+.orders:not(.archived-orders) .col-product {
+  width: 390px;
+}
+
+.orders:not(.archived-orders) .col-address {
+  width: 280px;
+}
+
+.orders:not(.archived-orders) .col-management {
+  width: 210px;
+}
+
+.orders:not(.archived-orders) .col-preparing,
+.orders:not(.archived-orders) .col-production,
+.orders:not(.archived-orders) .col-inspection,
+.orders:not(.archived-orders) .col-shipping {
+  width: 135px;
+}
+
+.orders:not(.archived-orders) .check-card {
+  min-height: 84px;
+}
+
+.order-actions {
+  align-items: center;
+}
+
+.order-actions .cancel-order {
+  border-color: #fecdca !important;
+  color: #b42318 !important;
+  background: #fffbfa !important;
+}
+
+.order-actions .cancel-order:hover {
+  color: #ffffff !important;
+  border-color: #b42318 !important;
+  background: #b42318 !important;
+}
+
+.col-shipping .cancel-order {
+  display: none !important;
+}
+
+body[data-theme="dark"] .order-import-bar {
+  border-bottom-color: rgba(148, 163, 184, .18);
+  background: #0f172a;
+}
+
+body[data-theme="dark"] .bulk-action-bar {
+  background: #172033 !important;
+  box-shadow: none;
+}
+
+body[data-theme="dark"] .order-actions .cancel-order {
+  border-color: rgba(248, 113, 113, .4) !important;
+  color: #fecaca !important;
+  background: #2a1518 !important;
+}
+
+body[data-theme="dark"] .order-actions .cancel-order:hover {
+  color: #111827 !important;
+  background: #fca5a5 !important;
+}
+
+@media (max-width: 1180px) {
+  .order-list-tools {
+    grid-template-columns: minmax(0, 1fr) auto !important;
+  }
+
+  .channel-filter,
+  .order-list-tools .export-button {
+    grid-column: 1 / -1;
+  }
+
+  .order-import-bar .import-maintenance-actions {
+    margin-left: 0;
+  }
+}
+
+@media (max-width: 760px) {
+  .orders-heading {
+    align-items: flex-start !important;
+  }
+
+  .orders-heading-actions {
+    width: 100%;
+    margin-left: 0 !important;
+    justify-content: flex-start !important;
+  }
+
+  .order-import-bar,
+  .order-import-bar #upload-form,
+  .order-import-bar .import-maintenance-actions,
+  .bulk-action-bar,
+  .bulk-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .order-import-bar .file-button,
+  .order-import-bar .primary,
+  .order-import-bar .duplicate-cleanup-button,
+  .order-list-tools .export-button,
+  .bulk-actions button {
+    width: 100%;
+  }
+
+  .order-import-bar .selected-files {
+    max-width: 100%;
+  }
+
+  .order-list-tools {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+/* Compact production board. This file loads after the base theme, so keep final board overrides here. */
+.orders:not(.archived-orders) table,
+.monthly-date-orders table {
+  min-width: 1320px !important;
+}
+
+.orders:not(.archived-orders) .col-channel { width: 190px !important; }
+.orders:not(.archived-orders) .col-product { width: 390px !important; }
+.orders:not(.archived-orders) .col-address { width: 250px !important; }
+.orders:not(.archived-orders) .col-preparing { width: 105px !important; }
+.orders:not(.archived-orders) .col-management { width: 180px !important; }
+.orders:not(.archived-orders) .col-production,
+.orders:not(.archived-orders) .col-inspection,
+.orders:not(.archived-orders) .col-shipping {
+  width: 105px !important;
+}
+
+.orders:not(.archived-orders) tbody td,
+.monthly-date-orders tbody td {
+  padding: 12px 14px !important;
+  vertical-align: top;
+}
+
+.orders:not(.archived-orders) .product-info--grouped,
+.monthly-date-orders .product-info--grouped {
+  gap: 7px !important;
+}
+
+.orders:not(.archived-orders) .product-label,
+.orders:not(.archived-orders) .registered-option span,
+.orders:not(.archived-orders) .extra-options > span,
+.orders:not(.archived-orders) .extra-products > span,
+.monthly-date-orders .product-label,
+.monthly-date-orders .registered-option span,
+.monthly-date-orders .extra-options > span,
+.monthly-date-orders .extra-products > span {
+  display: none !important;
+}
+
+.orders:not(.archived-orders) .product,
+.monthly-date-orders .product {
+  font-size: 13px !important;
+  line-height: 1.45 !important;
+  font-weight: 850 !important;
+}
+
+.orders:not(.archived-orders) .registered-option,
+.monthly-date-orders .registered-option {
+  padding: 7px 9px !important;
+  border-radius: 7px !important;
+}
+
+.orders:not(.archived-orders) .extra-options em,
+.monthly-date-orders .extra-options em {
+  padding: 5px 8px !important;
+  border-radius: 6px !important;
+  font-size: 11px !important;
+  line-height: 1.28 !important;
+}
+
+.orders:not(.archived-orders) .delivery-message,
+.monthly-date-orders .delivery-message {
+  margin-top: 8px !important;
+  padding: 8px 10px !important;
+  border-radius: 7px !important;
+  font-size: 11px !important;
+}
+
+.orders:not(.archived-orders) .management-field,
+.monthly-date-orders .management-field {
+  min-height: 0 !important;
+  padding: 0 !important;
+  gap: 6px !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.orders:not(.archived-orders) .management-field__head,
+.monthly-date-orders .management-field__head {
+  display: none !important;
+}
+
+.orders:not(.archived-orders) .management-number,
+.monthly-date-orders .management-number {
+  min-height: 46px !important;
+  max-height: 58px !important;
+  padding: 7px 8px !important;
+  border-radius: 7px !important;
+  font-size: 11px !important;
+  line-height: 1.32 !important;
+}
+
+.orders:not(.archived-orders) .management-field__actions,
+.monthly-date-orders .management-field__actions {
+  padding: 0 !important;
+}
+
+.orders:not(.archived-orders) .management-field button,
+.monthly-date-orders .management-field button {
+  min-width: 52px !important;
+  min-height: 28px !important;
+  padding: 5px 8px !important;
+  border-radius: 7px !important;
+  font-size: 10px !important;
+}
+
+.orders:not(.archived-orders) .management-field small,
+.monthly-date-orders .management-field small {
+  padding: 0 !important;
+  font-size: 9px !important;
+  line-height: 1.22 !important;
+  opacity: .72;
+}
+
+.orders:not(.archived-orders) .order-actions {
+  gap: 6px !important;
+}
+
+.orders:not(.archived-orders) .order-actions button,
+.orders:not(.archived-orders) .order-actions .cancel-order {
+  min-width: 72px !important;
+  min-height: 32px !important;
+  padding: 7px 10px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  border-radius: 8px !important;
+  font-size: 11px !important;
+  line-height: 1 !important;
+  font-weight: 850 !important;
+}
+
+.orders:not(.archived-orders) .col-preparing .check-card,
+.orders:not(.archived-orders) .col-production .check-card,
+.orders:not(.archived-orders) .col-inspection .check-card,
+.orders:not(.archived-orders) .col-shipping .check-card,
+.monthly-date-orders .col-preparing .check-card,
+.monthly-date-orders .col-production .check-card,
+.monthly-date-orders .col-inspection .check-card,
+.monthly-date-orders .col-shipping .check-card {
+  min-height: 0 !important;
+  padding: 0 0 0 10px !important;
+  grid-template-columns: 18px minmax(0, 1fr) !important;
+  gap: 3px 7px !important;
+  align-content: start !important;
+  border: 0 !important;
+  border-left: 3px solid rgba(148, 163, 184, .38) !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.orders:not(.archived-orders) .check-card input[type=checkbox],
+.monthly-date-orders .check-card input[type=checkbox] {
+  width: 15px !important;
+  height: 15px !important;
+}
+
+.orders:not(.archived-orders) .check-card label,
+.monthly-date-orders .check-card label {
+  font-size: 11px !important;
+  line-height: 1.25 !important;
+  font-weight: 850 !important;
+}
+
+.orders:not(.archived-orders) .check-card small,
+.monthly-date-orders .check-card small {
+  grid-column: 2 !important;
+  max-height: 0 !important;
+  overflow: hidden !important;
+  font-size: 10px !important;
+  line-height: 1.3 !important;
+  opacity: 0 !important;
+  transition: max-height .16s ease, opacity .16s ease;
+}
+
+.orders:not(.archived-orders) tbody tr:hover .check-card small,
+.orders:not(.archived-orders) .check-card:focus-within small,
+.monthly-date-orders tbody tr:hover .check-card small,
+.monthly-date-orders .check-card:focus-within small {
+  max-height: 32px !important;
+  opacity: .82 !important;
+}

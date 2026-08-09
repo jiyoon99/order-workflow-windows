@@ -1,61 +1,68 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="ko">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>하프북 주문 작업장</title>
-  <link rel="stylesheet" href="/styles.css?v=20260619-01">
+  <title>주문 관리</title>
+  <link rel="stylesheet" href="/styles.css?v=20260805-dark-monthly-02">
+  <link rel="stylesheet" href="/operations.css?v=20260805-dark-monthly-02">
+  <link rel="stylesheet" href="/order-board.css?v=20260805-dark-monthly-02">
 </head>
-<body>
+<body class="is-login-page">
   <header class="topbar">
-    <button id="home-button" class="brand-lockup" type="button" aria-label="주문 작업장 처음 화면으로 이동">
-      <div class="brand-mark" aria-hidden="true">H</div>
+    <button id="home-button" class="brand-lockup" type="button" aria-label="주문 관리 처음 화면으로 이동">
+      <span class="brand-mark brand-initials" aria-hidden="true">OF</span>
       <div>
-        <p class="eyebrow">HALFBOOK OPERATIONS</p>
-        <h1>하프북 주문 작업장</h1>
+        <p class="eyebrow">ORDERFLOW WORKSPACE</p>
+        <h1>오더플로우 워크스페이스</h1>
         <p class="subtitle">주문 수집부터 제작·출고까지 한 곳에서 관리합니다.</p>
       </div>
     </button>
     <div class="account-box">
       <span>로그인 사용자</span>
       <strong id="current-user">-</strong>
+      <div id="server-status" class="server-status is-checking" title="서버 상태 확인 중">
+        <span class="server-status-dot" aria-hidden="true"></span>
+        <div>
+          <strong id="server-status-label">서버 확인 중</strong>
+          <small id="server-status-detail">상태를 불러오는 중</small>
+        </div>
+      </div>
       <div class="account-actions">
+        <button id="notification-button" class="notification-button" type="button" aria-label="알림" title="알림" aria-expanded="false" aria-controls="notification-popover" hidden>
+          <svg class="notification-icon" aria-hidden="true" viewBox="0 0 24 24" focusable="false">
+            <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"></path>
+            <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+          </svg>
+          <span id="notification-badge" class="notification-badge" hidden>0</span>
+        </button>
         <button id="theme-toggle" class="theme-toggle" type="button">다크 모드</button>
         <button id="logout-button" type="button">로그아웃</button>
       </div>
     </div>
   </header>
+  <section id="notification-popover" class="notification-popover" hidden>
+    <header>
+      <strong>알림</strong>
+      <button id="notification-clear" type="button">읽음 처리</button>
+    </header>
+    <div id="notification-list" class="notification-list"></div>
+    <div id="notification-empty" class="notification-empty">최근 알림이 없습니다.</div>
+  </section>
 
   <main>
     <nav class="workspace-tabs" aria-label="작업장 메뉴">
-      <button class="workspace-tab is-active" data-view="orders-view" type="button">주문 작업장</button>
+      <button class="workspace-tab is-active" data-view="orders-view" type="button">주문 관리</button>
+      <button id="monthly-tab" class="workspace-tab" data-view="monthly-stats-view" type="button" hidden>월간 현황</button>
+      <button id="workload-tab" class="workspace-tab" data-view="workload-view" type="button" hidden>기간별 작업량</button>
       <button class="workspace-tab" data-view="shipping-customers-view" type="button">출고고객조회</button>
       <button class="workspace-tab" data-view="cancelled-view" type="button">취소 주문</button>
+      <button id="audit-tab" class="workspace-tab" data-view="audit-view" type="button" hidden>로그 기록</button>
       <button id="members-tab" class="workspace-tab" data-view="members-view" type="button" hidden>회원 관리</button>
+      <button id="notice-management-tab" class="workspace-tab" data-view="notice-management-view" type="button" hidden>공지사항 관리</button>
     </nav>
 
     <section id="orders-view" class="workspace-view">
-      <section class="toolbar panel">
-        <form id="upload-form" class="admin-only" hidden>
-          <label class="file-button">엑셀/ZIP 선택<input id="files" name="files" type="file" accept=".xlsx,.xls,.zip" multiple required></label>
-          <button id="import-button" type="submit" class="primary" disabled>주문 가져오기</button>
-          <span id="selected-files" class="selected-files">선택된 파일 없음</span>
-        </form>
-        <div class="toolbar-actions">
-          <input id="search" type="search" placeholder="주문번호, 상품, 수령인 검색">
-          <select id="status-filter" aria-label="상태 필터">
-            <option value="all">전체 상태</option>
-            <option value="waiting">제작 대기</option>
-            <option value="preparing">준비 중</option>
-            <option value="produced">제작 완료</option>
-            <option value="softwareInspection">SW 검수</option>
-            <option value="shipped">출고 확인</option>
-          </select>
-          <button id="export-button" class="export-button admin-only" type="button" hidden>금일 출고 확인 엑셀</button>
-        </div>
-        <p id="message" role="status"></p>
-      </section>
-
       <details id="manual-order" class="manual-order panel admin-only" hidden>
         <summary id="manual-order-summary">수기 주문 등록</summary>
         <form id="manual-order-form">
@@ -63,10 +70,15 @@
           <label>주문번호<input name="orderNumber" placeholder="예: TEL-20260611-001"></label>
           <label>채널
             <select name="channel">
+              <option value="스마트스토어">스마트스토어</option>
+              <option value="고도몰">고도몰</option>
+              <option value="카카오">카카오</option>
+              <option value="쿠팡">쿠팡</option>
               <option value="b2b">b2b</option>
               <option value="b2c">b2c</option>
               <option value="전화" selected>전화</option>
               <option value="방문">방문</option>
+              <option value="제품 교환">제품 교환</option>
             </select>
           </label>
           <label>주문일<input name="orderedAt" type="datetime-local"></label>
@@ -80,33 +92,76 @@
           <label>우편번호<input name="postalCode"></label>
           <label class="wide">주소<input name="address"></label>
           <label class="wide">배송메시지<input name="deliveryMessage"></label>
-          <label class="wide manual-order-check">
-            <span>SW 검수</span>
-            <div class="check-card check-card--inspection">
-              <input name="softwareInspectionDone" type="checkbox">
-              <span>SW 검수 완료</span>
-              <small>수기 주문 등록 시 바로 검수 완료로 표시</small>
-            </div>
-          </label>
-          <button id="manual-order-submit" class="primary" type="submit">주문 목록에 등록</button>
+          <label class="wide">비고<input name="memo" placeholder="내부 확인 사항을 입력"></label>
+          <div class="manual-order-actions">
+            <button id="manual-order-cancel" class="secondary" type="button" hidden>수정 취소</button>
+            <button id="manual-order-submit" class="primary" type="submit">주문 목록에 등록</button>
+          </div>
         </form>
         <p id="manual-message" role="status"></p>
       </details>
 
-      <section class="stats" aria-label="주문 현황 및 상태 필터">
-        <button class="stat-card is-active" type="button" data-status="all" aria-pressed="true"><span>전체 주문</span><strong id="total-count">0</strong></button>
-        <button class="stat-card" type="button" data-status="waiting" aria-pressed="false"><span>제작 대기</span><strong id="waiting-count">0</strong></button>
-        <button class="stat-card preparing-stat" type="button" data-status="preparing" aria-pressed="false"><span>준비 중</span><strong id="preparing-count">0</strong></button>
-        <button class="stat-card" type="button" data-status="produced" aria-pressed="false"><span>제작 완료</span><strong id="produced-count">0</strong></button>
-        <button class="stat-card inspection-stat" type="button" data-status="softwareInspection" aria-pressed="false"><span>SW 검수</span><strong id="inspection-count">0</strong></button>
-        <button class="stat-card accent" type="button" data-status="shipped" aria-pressed="false"><span>출고 확인</span><strong id="shipped-count">0</strong></button>
-      </section>
-
       <section class="orders panel">
-        <div class="section-heading"><div class="order-heading-controls"><h2>주문 목록</h2><div id="channel-filter" class="channel-filter" aria-label="구매 사이트 필터"></div></div><span id="visible-count"></span></div>
+        <div class="section-heading orders-heading">
+          <div class="orders-title"><p class="eyebrow dark">ORDER BOARD</p><h2>주문 목록</h2></div>
+          <div class="orders-heading-actions">
+            <span id="visible-count"></span>
+          </div>
+        </div>
+        <div class="order-import-bar">
+          <form id="upload-form" class="admin-only" hidden>
+            <label class="file-button">엑셀/ZIP 선택<input id="files" name="files" type="file" accept=".xlsx,.xls,.zip" multiple required></label>
+            <input id="excel-password" name="excelPassword" type="password" placeholder="엑셀 비밀번호(선택)" autocomplete="off">
+            <button id="import-button" type="submit" class="primary" disabled>주문 가져오기</button>
+            <span id="selected-files" class="selected-files">선택된 파일 없음</span>
+          </form>
+          <div class="import-maintenance-actions">
+            <button id="dedupe-button" class="duplicate-cleanup-button duplicate-cleanup-only" type="button" hidden>중복 주문 정리</button>
+            <button id="delete-latest-import" class="duplicate-cleanup-button" type="button" hidden>최근 수집 주문 삭제</button>
+          </div>
+        </div>
+        <p id="message" role="status"></p>
+        <section class="stats" aria-label="주문 현황 및 상태 필터">
+          <button class="stat-card is-active" type="button" data-status="all" aria-pressed="true"><span>전체 주문</span><strong id="total-count">0</strong></button>
+          <button class="stat-card" type="button" data-status="waiting" aria-pressed="false"><span>제작 대기</span><strong id="waiting-count">0</strong></button>
+          <button class="stat-card preparing-stat" type="button" data-status="preparing" aria-pressed="false"><span>준비 중</span><strong id="preparing-count">0</strong></button>
+          <button class="stat-card" type="button" data-status="produced" aria-pressed="false"><span>제작 완료</span><strong id="produced-count">0</strong></button>
+          <button class="stat-card inspection-stat" type="button" data-status="softwareInspection" aria-pressed="false"><span>SW 검수</span><strong id="inspection-count">0</strong></button>
+          <button class="stat-card accent" type="button" data-status="shipped" aria-pressed="false"><span>출고 확인</span><strong id="shipped-count">0</strong></button>
+        </section>
+        <div class="order-list-tools">
+          <div class="order-list-search">
+            <input id="search" type="search" placeholder="주문번호, 상품, 수령인 검색">
+          </div>
+          <div class="order-list-options">
+            <select id="order-sort" aria-label="주문 정렬">
+              <option value="date-asc">주문일 ↑</option>
+              <option value="date-desc">주문일 ↓</option>
+            </select>
+          </div>
+          <div id="channel-filter" class="channel-filter" aria-label="구매 사이트 필터"></div>
+          <button id="export-button" class="export-button admin-only" type="button" hidden>금일 출고 확인 엑셀</button>
+        </div>
+        <div id="bulk-action-bar" class="bulk-action-bar" hidden>
+          <div class="bulk-selection-group">
+            <label class="bulk-select-all"><input id="select-visible-orders" type="checkbox"> 현재 목록 선택</label>
+            <span id="bulk-selected-count">0건 선택</span>
+          </div>
+          <div class="bulk-actions">
+            <button data-bulk-action="preparing" type="button">준비 중 처리</button>
+            <button data-bulk-action="production" type="button">제작 완료</button>
+            <button data-bulk-action="softwareInspection" type="button">SW 검수 완료</button>
+            <button data-bulk-action="shipping" type="button">출고 확인</button>
+          </div>
+        </div>
+        <div id="date-mode-banner" class="date-mode-banner" hidden>
+          <span>날짜별 전체 주문 조회</span>
+          <strong id="date-mode-label">선택 날짜</strong>
+          <em id="date-mode-count">0건</em>
+        </div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>채널 / 주문</th><th>상품 정보</th><th>배송지</th><th>준비 중</th><th>제품 관리번호</th><th>제작 완료</th><th>SW 검수</th><th>출고 처리</th></tr></thead>
+            <thead><tr><th class="col-channel">채널 / 주문</th><th class="col-product">상품 정보</th><th class="col-address">배송지</th><th class="col-preparing">준비 중</th><th class="col-management">제품 관리번호</th><th class="col-production">제작 완료</th><th class="col-inspection">SW 검수</th><th class="col-shipping">출고 처리</th></tr></thead>
             <tbody id="orders-body"></tbody>
           </table>
           <div id="empty" class="empty"><strong>표시할 주문이 없습니다</strong><span>검색 조건을 변경하거나 주문 엑셀을 가져오세요.</span></div>
@@ -114,10 +169,176 @@
       </section>
     </section>
 
+    <section id="monthly-stats-view" class="workspace-view" hidden>
+      <section class="panel monthly-overview">
+        <div class="section-heading">
+          <div><p class="eyebrow dark">MONTHLY VIEW</p><h2>월간 현황</h2></div>
+          <span>주문 수집과 출고 현황을 한 화면에서 확인합니다</span>
+        </div>
+      </section>
+      <div class="monthly-stats-layout">
+        <section class="daily-orders panel monthly-stat-panel">
+          <div class="daily-orders-head">
+            <div>
+              <h3>주문 수집 기간</h3>
+              <div class="daily-orders-summary">
+                <span id="calendar-selected-orders" class="daily-summary-card">
+                  <span id="calendar-selected-label">시작일과 종료일 선택</span>
+                  <strong id="calendar-selected-count">0건</strong>
+                </span>
+                <span class="daily-summary-card">
+                  <span>월간 수집</span>
+                  <strong id="calendar-month-count">0건</strong>
+                </span>
+              </div>
+            </div>
+            <div class="daily-orders-actions">
+              <button id="calendar-prev-month" type="button" aria-label="이전 달" hidden>‹</button>
+              <input id="calendar-month" type="month" aria-label="조회 월" hidden>
+              <button id="calendar-next-month" type="button" aria-label="다음 달" hidden>›</button>
+              <button id="calendar-today" type="button" hidden>오늘</button>
+              <button id="calendar-clear-date" type="button" hidden>기간 초기화</button>
+              <button id="calendar-workload-sync" type="button" disabled hidden>선택 기간 작업량</button>
+              <button id="calendar-toggle" type="button" aria-expanded="false">월간 달력 보기</button>
+            </div>
+          </div>
+          <form id="collection-range-form" class="calendar-range-filter">
+            <label>시작일<input id="collection-range-from" type="date" required></label>
+            <label>종료일<input id="collection-range-to" type="date" required></label>
+            <button class="primary" type="submit">조회</button>
+          </form>
+          <div id="calendar-grid-panel" class="calendar-grid-panel" hidden>
+            <div class="calendar-weekdays" aria-hidden="true">
+              <span>일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span>토</span>
+            </div>
+            <div id="daily-order-calendar" class="daily-order-calendar" aria-label="주문 수집 시작일과 종료일 선택 캘린더"></div>
+          </div>
+        </section>
+
+        <section class="daily-orders panel shipping-calendar-panel monthly-stat-panel as-history-only" hidden>
+          <div class="daily-orders-head">
+            <div>
+              <h3>출고 현황</h3>
+              <div class="daily-orders-summary">
+                <span class="daily-summary-card">
+                  <span>월간 출고</span>
+                  <strong id="shipping-calendar-month-count">0건</strong>
+                </span>
+                <span id="shipping-calendar-day" class="daily-summary-card">
+                  <span id="shipping-calendar-day-label">오늘 출고</span>
+                  <strong id="shipping-calendar-day-count">0건</strong>
+                </span>
+                <span id="shipping-calendar-selected" class="daily-summary-card">
+                  <span>조회 날짜</span>
+                  <strong id="shipping-calendar-selected-label">전체</strong>
+                </span>
+              </div>
+            </div>
+            <div class="daily-orders-actions">
+              <button id="shipping-calendar-prev-month" type="button" aria-label="이전 달" hidden>‹</button>
+              <input id="shipping-calendar-month" type="month" aria-label="출고 조회 월" hidden>
+              <button id="shipping-calendar-next-month" type="button" aria-label="다음 달" hidden>›</button>
+              <button id="shipping-calendar-today" type="button" hidden>오늘</button>
+              <button id="shipping-calendar-clear-date" type="button" hidden>전체 날짜</button>
+              <button id="shipping-workload-sync" type="button" disabled hidden>선택 날짜 작업량</button>
+              <button id="shipping-calendar-toggle" type="button" aria-expanded="false">월간 달력 보기</button>
+            </div>
+          </div>
+          <form id="shipping-range-form" class="calendar-range-filter">
+            <label>시작일<input id="shipping-range-from" type="date" required></label>
+            <label>종료일<input id="shipping-range-to" type="date" required></label>
+            <button class="primary" type="submit">조회</button>
+          </form>
+          <div id="shipping-calendar-grid-panel" class="calendar-grid-panel" hidden>
+            <div class="calendar-weekdays" aria-hidden="true">
+              <span>일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span>토</span>
+            </div>
+            <div id="shipping-calendar" class="daily-order-calendar" aria-label="일별 출고 현황 캘린더"></div>
+          </div>
+        </section>
+      </div>
+      <section id="shipping-date-orders-panel" class="orders panel shipping-date-orders" hidden>
+        <div class="section-heading">
+          <div><p class="eyebrow dark">SELECTED SHIPPING DATE</p><h2>선택 날짜 출고 주문</h2></div>
+          <span id="shipping-date-orders-count">0건 표시</span>
+        </div>
+        <div id="shipping-date-mode-banner" class="date-mode-banner">
+          <span>선택 기간 출고 주문 조회</span>
+          <strong id="shipping-date-mode-label">선택 기간</strong>
+          <em id="shipping-date-mode-count">0건</em>
+        </div>
+        <div class="table-wrap">
+          <table class="archived-table">
+            <thead><tr><th>번호</th><th>채널 / 주문</th><th>상품 정보</th><th>수령인 / 배송지</th><th>제작 완료</th><th>출고 확인</th></tr></thead>
+            <tbody id="shipping-date-orders-body"></tbody>
+          </table>
+          <div id="shipping-date-orders-empty" class="empty"><strong>선택한 기간의 출고 주문이 없습니다</strong><span>다른 시작일과 종료일을 선택해 조회하세요.</span></div>
+        </div>
+      </section>
+      <section id="monthly-date-orders-panel" class="orders panel monthly-date-orders" hidden>
+        <div class="section-heading">
+          <div><p class="eyebrow dark">SELECTED DATE</p><h2>선택 날짜 주문</h2></div>
+          <span id="monthly-visible-count">0건 표시</span>
+        </div>
+        <div id="monthly-date-mode-banner" class="date-mode-banner" hidden>
+          <span>선택 기간 전체 주문 조회</span>
+          <strong id="monthly-date-mode-label">선택 기간</strong>
+          <em id="monthly-date-mode-count">0건</em>
+        </div>
+        <div class="monthly-date-tools">
+          <div class="worker-search-group">
+            <label class="worker-search">작업자 검색<input id="monthly-worker-search" type="search" placeholder="제작 완료 작업자"></label>
+            <span id="monthly-worker-search-count" class="worker-search-count">제작완료 0건</span>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th class="col-channel">채널 / 주문</th><th class="col-product">상품 정보</th><th class="col-address">배송지</th><th class="col-preparing">준비 중</th><th class="col-management">제품 관리번호</th><th class="col-production">제작 완료</th><th class="col-inspection">SW 검수</th><th class="col-shipping">출고 처리</th></tr></thead>
+            <tbody id="monthly-orders-body"></tbody>
+          </table>
+          <div id="monthly-empty" class="empty"><strong>선택한 날짜의 주문이 없습니다</strong><span>월간 현황에서 주문 수집 날짜를 선택하세요.</span></div>
+        </div>
+      </section>
+    </section>
+
+    <section id="workload-view" class="workspace-view" hidden>
+      <section class="panel workload-panel">
+        <div class="section-heading">
+          <div><p class="eyebrow dark">WORKLOAD</p><h2>기간별 작업량</h2></div>
+          <form id="workload-form" class="workload-filter">
+            <label>시작일<input id="workload-from" type="date" required></label>
+            <label>종료일<input id="workload-to" type="date" required></label>
+            <button class="primary" type="submit">조회</button>
+          </form>
+        </div>
+        <p id="workload-summary" class="workload-summary">출고 완료 주문을 기준으로 제작 완료와 SW 검수 작업량을 조회합니다.</p>
+        <div id="workload-cards" class="workload-cards"></div>
+        <div id="workload-empty" class="empty" hidden><strong>기록된 작업이 없습니다</strong><span>선택한 기간에 완료 처리된 업무가 없습니다.</span></div>
+        <div id="workload-production-detail" class="workload-production-detail" hidden>
+          <div class="section-heading">
+            <div><p class="eyebrow dark">WORK COMPLETED</p><h3>작업자별 완료 건</h3></div>
+            <label class="workload-worker-filter">작업자 선택<select id="workload-worker-select"><option value="">작업자를 선택하세요</option></select></label>
+          </div>
+          <div id="workload-stage-tags" class="workload-stage-tags" role="group" aria-label="완료 작업 종류">
+            <button type="button" data-workload-stage="all" class="is-active">전체</button>
+            <button type="button" data-workload-stage="production">제작 완료</button>
+            <button type="button" data-workload-stage="inspection">SW 검수 완료</button>
+          </div>
+          <div class="table-wrap">
+            <table class="workload-production-table">
+              <thead><tr><th>구분</th><th>완료일시</th><th>작업자</th><th>채널 / 주문번호</th><th>상품 정보</th><th>수량</th><th>수령인</th><th>관리번호</th></tr></thead>
+              <tbody id="workload-production-body"></tbody>
+            </table>
+            <div id="workload-production-empty" class="empty"><strong>작업자를 선택하세요</strong><span>선택한 작업자의 제작 완료 건이 표시됩니다.</span></div>
+          </div>
+        </div>
+      </section>
+    </section>
+
     <section id="shipping-customers-view" class="workspace-view" hidden>
       <section class="orders panel archived-orders as-history-only" hidden>
         <div class="section-heading">
-          <div class="order-heading-controls"><h2>고객별 출고 이력</h2><input id="as-history-search" type="search" placeholder="고객 이름 또는 연락처 입력"></div>
+          <div class="order-heading-controls"><h2>고객별 출고 이력</h2><input id="as-history-search" type="search" placeholder="이름 검색"></div>
           <span id="as-history-count">고객을 검색하세요</span>
         </div>
         <div id="as-history-body" class="customer-history"></div>
@@ -126,10 +347,13 @@
 
       <section class="orders panel archived-orders">
         <div class="section-heading">
-          <div class="order-heading-controls"><h2>출고 확인 주문</h2><input id="archived-search" type="search" placeholder="주문번호, 상품, 고객 이름, 연락처 검색"></div>
-          <span id="archived-count">0건</span>
+          <div class="order-heading-controls"><h2>출고 확인 주문</h2><select id="archived-channel" aria-label="출고 확인 주문 마켓 선택"><option value="all">전체 마켓</option></select><input id="archived-search" type="search" placeholder="주문번호, 상품, 고객 이름, 연락처 검색"></div>
+          <div class="section-heading-actions">
+            <span id="archived-count">0건</span>
+            <button id="archived-toggle" class="section-toggle" type="button" aria-expanded="false">펼치기</button>
+          </div>
         </div>
-        <div class="table-wrap">
+        <div id="archived-section-body" class="table-wrap" hidden>
           <table class="archived-table">
             <thead><tr><th>번호</th><th>채널 / 주문</th><th>상품 정보</th><th>수령인 / 배송지</th><th>제작 완료</th><th>출고 확인</th></tr></thead>
             <tbody id="archived-orders-body"></tbody>
@@ -155,6 +379,22 @@
       </section>
     </section>
 
+    <section id="audit-view" class="workspace-view" hidden>
+      <section class="orders panel archived-orders">
+        <div class="section-heading">
+          <div class="order-heading-controls"><h2>로그 기록</h2><input id="audit-search" type="search" placeholder="작업자, 이벤트, 주문번호 검색"></div>
+          <span id="audit-count">0건</span>
+        </div>
+        <div class="table-wrap audit-table-wrap">
+          <table class="audit-table">
+            <thead><tr><th>일시</th><th>작업자</th><th>이벤트</th><th>주문번호</th><th>상세</th></tr></thead>
+            <tbody id="audit-body"></tbody>
+          </table>
+          <div id="audit-empty" class="empty"><strong>로그 기록이 없습니다</strong><span>주문 처리, 로그인, 내보내기 등의 작업 이력이 여기에 표시됩니다.</span></div>
+        </div>
+      </section>
+    </section>
+
     <section id="members-view" class="workspace-view" hidden>
       <section class="member-management panel">
         <div class="section-heading"><div><p class="eyebrow dark">ADMIN</p><h2>회원 관리</h2></div><span>가입자 정보와 권한을 관리합니다.</span></div>
@@ -171,11 +411,63 @@
         </div>
       </section>
     </section>
+
+    <section id="notice-management-view" class="workspace-view" hidden>
+      <section class="notice-management panel">
+        <div class="section-heading">
+          <div><p class="eyebrow dark">NOTICE</p><h2>로그인 공지사항 관리</h2></div>
+          <span>총관리자와 MD만 수정할 수 있습니다.</span>
+        </div>
+        <div class="notice-management__content">
+          <form id="channel-notice-editor" class="notice-editor">
+            <label>공지 제목<input name="title" maxlength="80" required></label>
+            <label>소제목<input name="lead" maxlength="120" required></label>
+            <label>공지 내용<textarea name="message" maxlength="2000" rows="8" required></textarea></label>
+            <div class="notice-editor__actions">
+              <span id="channel-notice-editor-message" role="status"></span>
+              <button class="primary" type="submit">공지사항 저장</button>
+            </div>
+          </form>
+          <aside class="notice-preview" aria-label="공지사항 미리보기">
+            <span>로그인 팝업 미리보기</span>
+            <div class="notice-preview__card">
+              <strong id="notice-preview-title">공지사항</strong>
+              <div>
+                <b id="notice-preview-lead">채널 주문 필수 확인</b>
+                <p id="notice-preview-message">스마트스토어, 쿠팡, 카카오 주문에는 원키와 리브레가 반드시 들어가 있어야 합니다.</p>
+              </div>
+            </div>
+          </aside>
+        </div>
+      </section>
+    </section>
   </main>
 
+  <div id="notification-stack" class="notification-stack" aria-live="polite" aria-atomic="false"></div>
+
+  <div id="channel-requirement-notice" class="notice-modal" role="dialog" aria-modal="true" aria-labelledby="channel-requirement-title" hidden>
+    <div class="notice-modal__card">
+      <div class="notice-modal__header">
+        <h2 id="channel-requirement-title">공지사항</h2>
+        <button class="notice-modal__x" data-close-channel-notice type="button" aria-label="공지 닫기">×</button>
+      </div>
+      <div class="notice-modal__body">
+        <p id="channel-requirement-lead" class="notice-modal__lead">채널 주문 필수 확인</p>
+        <p id="channel-requirement-message" class="notice-modal__message">스마트스토어, 쿠팡, 카카오 주문에는<br>원키와 리브레가 반드시 들어가 있어야 합니다.</p>
+      </div>
+      <div class="notice-modal__footer">
+        <label class="notice-modal__option">
+          <input id="channel-requirement-snooze" type="checkbox">
+          <span>다음 로그인까지 보지 않기</span>
+        </label>
+        <button id="channel-requirement-close" class="primary" data-close-channel-notice type="button">확인</button>
+      </div>
+    </div>
+  </div>
+
   <div id="auth-screen" class="auth-screen">
-    <form id="auth-form" class="auth-card">
-      <p class="eyebrow dark">HALFBOOK</p>
+    <form id="auth-form" class="auth-card" method="post" action="/api/auth/login">
+      <p class="eyebrow dark">ORDERFLOW</p>
       <h2 id="auth-title">작업장 로그인</h2>
       <p id="auth-help">계정으로 로그인하면 작업 기록에 이름이 자동 저장됩니다.</p>
       <div id="auth-tabs" class="auth-tabs">
@@ -189,6 +481,9 @@
       <p id="auth-message" role="status"></p>
     </form>
   </div>
-  <script type="module" src="/app.js?v=20260619-01"></script>
+  <script defer src="/app-state.js?v=20260728-notice-management-01"></script>
+  <script defer src="/utils.js?v=20260706-01"></script>
+  <script defer src="/api.js?v=20260706-01"></script>
+  <script defer src="/app.js?v=20260805-calendar-navigation-01"></script>
 </body>
 </html>

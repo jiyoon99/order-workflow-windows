@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from excel import read_first_sheet
@@ -71,32 +71,160 @@ def _number(value: str, fallback: int = 0) -> int:
         return fallback
 
 
-def _collected_orders(rows: list[dict[str, str]], source_file: str) -> list[dict]:
-    # 주문수집 파일은 한 주문이 여러 줄로 나뉠 수 있어서, 시작 행 기준으로 묶는다.
-    groups: list[list[dict[str, str]]] = []
+def _excel_datetime(value: str) -> str:
+    text = str(value or "").strip()
+    try:
+        serial = float(text)
+    except ValueError:
+        return text
+    converted = datetime(1899, 12, 30) + timedelta(days=serial)
+    return converted.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _smartstore(row: dict[str, str], source_file: str) -> dict:
+    product_order_number = _first(row, "상품주문번호")
+    return {
+        "importKey": f"스마트스토어:{product_order_number}",
+        "channel": _first(row, "판매채널") or "스마트스토어",
+        "sourceFile": source_file,
+        "orderNumber": product_order_number or _first(row, "주문번호"),
+        "orderedAt": _excel_datetime(_first(row, "주문일시", "결제일")),
+        "productName": _first(row, "상품명"),
+        "optionName": _first(row, "옵션정보"),
+        "productCode": _first(row, "판매자 상품코드", "옵션관리코드", "상품번호"),
+        "quantity": _number(_first(row, "수량"), 1),
+        "amount": _number(_first(row, "최종 상품별 총 주문금액", "상품가격")),
+        "recipient": _first(row, "수취인명"),
+        "phone": _first(row, "수취인연락처1", "수취인연락처2"),
+        "postalCode": _first(row, "우편번호"),
+        "address": _first(row, "통합배송지") or " ".join(
+            value for value in [_first(row, "기본배송지"), _first(row, "상세배송지")] if value
+        ),
+        "deliveryMessage": _first(row, "배송메세지", "배송메시지"),
+        "courier": _first(row, "택배사"),
+        "trackingNumber": _first(row, "송장번호"),
+    }
+
+
+def _smartstore_orders(rows: list[dict[str, str]], source_file: str) -> list[dict]:
+    """Combine SmartStore product rows belonging to one marketplace order."""
+    groups: dict[str, list[dict[str, str]]] = {}
     for row in rows:
-        starts_order = bool(_first(row, "주문일시", "수취인 이름"))
+        order_number = _first(row, "주문번호") or _first(row, "상품주문번호")
+        if order_number:
+            groups.setdefault(order_number, []).append(row)
+
+    orders: list[dict] = []
+    for order_number, items in groups.items():
+        main = items[0]
+        order = _smartstore(main, source_file)
+        additions: list[str] = []
+        for row in items[1:]:
+            product = _first(row, "상품명")
+            option = _first(row, "옵션정보")
+            quantity = _number(_first(row, "수량"), 1)
+            # 같은 기본 상품이 옵션별 행으로 반복되면 상품명은 한 번만 보여준다.
+            detail = option if product == order["productName"] and option else " / ".join(
+                value for value in (product, option) if value
+            )
+            if detail:
+                additions.append(f"{detail} x{quantity}" if quantity > 1 else detail)
+        order["orderNumber"] = order_number
+        order["importKey"] = f"스마트스토어:{order_number}"
+        order["optionName"] = " / ".join(value for value in [order["optionName"], *additions] if value)
+        order["amount"] = sum(_number(_first(row, "최종 상품별 총 주문금액", "상품가격")) for row in items)
+        orders.append(order)
+    return orders
+
+
+def _order_number(row: dict[str, str]) -> str:
+    return _first(
+        row,
+        "주문번호",
+        "주문 번호",
+        "주문ID",
+        "주문 ID",
+        "주문코드",
+        "주문 코드",
+        "마켓주문번호",
+        "마켓 주문번호",
+        "쇼핑몰 주문번호",
+        "상품주문번호",
+        "상품 주문번호",
+        "결제번호",
+        "묶음배송번호",
+    )
+
+
+def _collected_group_identity(row: dict[str, str]) -> tuple[str, ...]:
+    # 주문수집 파일은 한 주문이 여러 행으로 풀려 들어온다.
+    # 주문번호가 없을 때도 같은 배송/수취 정보면 같은 주문 그룹으로 묶기 위한 식별자다.
+    return (
+        _first(row, "플랫폼"),
+        _order_number(row),
+        _ordered_at(row),
+        _first(row, "수취인 이름"),
+        _first(row, "연락처", "수령인 연락처", "수취인 연락처"),
+        _first(row, "우편번호", "배송지우편번호", "배송지 우편번호"),
+        _first(row, "주소", "배송지주소", "배송지 주소", "배송주소", "기본주소") or _address(row),
+    )
+
+
+def _is_collected_primary_product(product_line: str, main_product: str) -> bool:
+    # 같은 노트북을 여러 대 샀거나 서로 다른 노트북을 같이 산 경우 모두 수량에 반영한다.
+    # 액세서리/프로그램 옵션은 product_line에 있어도 주 상품 수량으로 보지 않는다.
+    if not product_line:
+        return False
+    if product_line == main_product:
+        return True
+    return "노트북" in product_line and "노트북" in main_product
+
+
+def _collected_orders(rows: list[dict[str, str]], source_file: str) -> list[dict]:
+    # 주문수집 파일은 한 주문의 여러 상품 줄에도 주문일시/수취인이 반복될 수 있다.
+    # 같은 주문번호 또는 같은 배송/수취 정보가 연속되면 하나의 주문으로 묶는다.
+    groups: list[list[dict[str, str]]] = []
+    current_identity: tuple[str, ...] | None = None
+    for row in rows:
+        identity = _collected_group_identity(row)
+        has_identity = any(identity)
+        same_order_number = bool(identity[1] and current_identity and identity[1] == current_identity[1])
+        same_collection_order = has_identity and current_identity == identity
+        starts_order = bool(_first(row, "주문일시", "수취인 이름")) and not (same_order_number or same_collection_order)
         if starts_order or not groups:
             groups.append([row])
+            current_identity = identity if has_identity else None
         else:
             groups[-1].append(row)
+            if has_identity and current_identity is None:
+                current_identity = identity
 
     orders = []
     for group_index, group in enumerate(groups, 1):
         first = group[0]
+        # 첫 상품은 대표 상품명으로 두고, 뒤에 나온 노트북/옵션 행은 optionName에 보관한다.
+        # 프론트는 이 구조를 다시 상품 블록으로 풀어서 나다은 님 같은 복수 노트북 주문을 보여준다.
         product_lines = [_first(row, "상품명 + 옵션명") for row in group if _first(row, "상품명 + 옵션명")]
         product_name = product_lines[0] if product_lines else ""
-        extra_options = product_lines[1:]
+        extra_options = [line for line in product_lines[1:] if line != product_name]
         registered_option = _first(first, "등록옵션명")
         option_name = " / ".join([value for value in [registered_option, *extra_options] if value])
+        quantity = sum(
+            _number(_first(row, "수량"), 1)
+            for row in group
+            if _is_collected_primary_product(_first(row, "상품명 + 옵션명"), product_name)
+        )
+        # 주문번호가 없는 수집 파일은 내용 서명으로 안정적인 임시번호를 만든다.
+        # 같은 파일을 다시 넣었을 때 번호가 흔들리면 중복 판정이 약해지므로 서명 항목을 신중히 유지한다.
         signature = "|".join([
             _first(first, "플랫폼"), _first(first, "주문일시"), _first(first, "수취인 이름"),
             product_name, option_name, str(group_index),
         ])
         short_id = hashlib.sha256(signature.encode()).hexdigest()[:10].upper()
-        order_number = f"수집-{short_id}"
+        actual_order_number = _order_number(first)
+        order_number = actual_order_number or f"수집-{short_id}"
         orders.append({
-            "importKey": f"주문수집:{short_id}",
+            "importKey": f"주문수집:{_first(first, '플랫폼') or '기타'}:{order_number}",
             "channel": _first(first, "플랫폼") or "기타",
             "sourceFile": source_file,
             "orderNumber": order_number,
@@ -104,7 +232,7 @@ def _collected_orders(rows: list[dict[str, str]], source_file: str) -> list[dict
             "productName": product_name,
             "optionName": option_name,
             "productCode": registered_option,
-            "quantity": _number(_first(first, "수량"), 1),
+            "quantity": max(1, quantity),
                         "amount": _number(_first(first, "총 상품결제금액")),
             "recipient": _first(first, "수취인 이름"),
             "phone": _first(first, "연락처", "수령인 연락처", "수취인 연락처"),
@@ -192,13 +320,16 @@ def _godomall_orders(rows: list[dict[str, str]], source_file: str) -> list[dict]
     return orders
 
 
-def import_workbook(content: bytes, source_file: str) -> list[dict]:
+def import_workbook(content: bytes, source_file: str, password: str = "") -> list[dict]:
     # 헤더 조합을 보고 채널별 파서를 고른다. 새 포맷이 오면 여기서 분기 추가가 필요하다.
-    rows = read_first_sheet(content, source_file)
+    rows = read_first_sheet(content, source_file, password)
     if not rows:
         raise ValueError("엑셀에 주문 데이터가 없습니다.")
     headers = set(rows[0].keys())
-    if {"플랫폼", "상품명 + 옵션명", "수취인 이름"} <= headers:
+    if {"상품주문번호", "판매채널", "수취인명", "상품명"} <= headers:
+        imported = _smartstore_orders(rows, source_file)
+        importer = None
+    elif {"플랫폼", "상품명 + 옵션명", "수취인 이름"} <= headers:
         imported = _collected_orders(rows, source_file)
         importer = None
     elif {"주문 번호", "상품명", "상품수량", "수취인 이름"} <= headers:

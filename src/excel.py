@@ -4,7 +4,9 @@ import html
 import io
 import os
 import re
+import shutil
 import subprocess
+import sys
 import tempfile
 import zipfile
 from html.parser import HTMLParser
@@ -14,6 +16,54 @@ from xml.etree import ElementTree as ET
 MAIN_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 PACKAGE_REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
+VENDOR = Path(__file__).resolve().parent / "_vendor"
+
+
+def _decrypt_with_msoffcrypto(content: bytes, password: str) -> bytes | None:
+    """Decrypt an Office workbook without launching desktop Excel.
+
+    Dependencies are bundled in ``src/_vendor`` so this also works from the
+    embedded Python runtime and from the SYSTEM scheduled task.
+    """
+    if VENDOR.exists() and str(VENDOR) not in sys.path:
+        sys.path.insert(0, str(VENDOR))
+    try:
+        import msoffcrypto
+        from msoffcrypto.exceptions import DecryptionError, InvalidKeyError
+    except ImportError:
+        return None
+
+    source = io.BytesIO(content)
+    destination = io.BytesIO()
+    try:
+        office_file = msoffcrypto.OfficeFile(source)
+        office_file.load_key(password=password, verify_password=True)
+        office_file.decrypt(destination)
+    except (DecryptionError, InvalidKeyError) as error:
+        raise ValueError("Excel 비밀번호가 올바른지 확인해주세요.") from error
+    except Exception as error:
+        raise ValueError("암호화된 Excel 파일을 해제하지 못했습니다.") from error
+    return destination.getvalue()
+
+
+def find_libreoffice_command() -> str | None:
+    override = os.getenv("LIBREOFFICE_BIN")
+    if override:
+        return override
+    for candidate in ("libreoffice", "soffice"):
+        command = shutil.which(candidate)
+        if command:
+            return command
+    windows_candidates = [
+        Path(r"C:\Program Files\LibreOffice\program\soffice.exe"),
+        Path(r"C:\Program Files (x86)\LibreOffice\program\soffice.exe"),
+        Path(r"C:\Program Files\LibreOffice\program\soffice.com"),
+        Path(r"C:\Program Files (x86)\LibreOffice\program\soffice.com"),
+    ]
+    for candidate in windows_candidates:
+        if candidate.exists():
+            return str(candidate)
+    return None
 
 
 class _TableParser(HTMLParser):
@@ -80,7 +130,44 @@ def _column_number(reference: str) -> int:
     return result
 
 
-def _convert_xls_to_xlsx(content: bytes) -> bytes:
+def _decrypt_with_excel(content: bytes, password: str) -> bytes:
+    decrypted = _decrypt_with_msoffcrypto(content, password)
+    if decrypted is not None:
+        return decrypted
+    if os.name != "nt":
+        raise ValueError("암호화된 Excel 파일은 현재 Windows 서버에서만 처리할 수 있습니다.")
+    script = Path(__file__).resolve().parent.parent / "tools" / "decrypt-excel.ps1"
+    if not script.exists():
+        raise ValueError("암호화 Excel 변환 스크립트를 찾을 수 없습니다.")
+    with tempfile.TemporaryDirectory(prefix="order-workflow-encrypted-") as directory:
+        temporary = Path(directory)
+        source = temporary / "upload.xlsx"
+        converted = temporary / "decrypted.xlsx"
+        source.write_bytes(content)
+        environment = {**os.environ, "EXCEL_OPEN_PASSWORD": password}
+        creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        try:
+            result = subprocess.run(
+                [
+                    "powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+                    "-File", str(script), str(source), str(converted),
+                ],
+                check=False,
+                capture_output=True,
+                env=environment,
+                timeout=45,
+                creationflags=creation_flags,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired) as error:
+            raise ValueError("암호화된 Excel 파일을 열지 못했습니다.") from error
+        if result.returncode != 0 or not converted.exists():
+            raise ValueError("Excel 비밀번호가 올바른지 확인해주세요.")
+        return converted.read_bytes()
+
+
+def _convert_xls_to_xlsx(content: bytes, password: str = "") -> bytes:
+    if password:
+        return _decrypt_with_excel(content, password)
     with tempfile.TemporaryDirectory(prefix="order-workflow-xls-") as directory:
         temporary = Path(directory)
         source = temporary / "upload.xls"
@@ -89,8 +176,11 @@ def _convert_xls_to_xlsx(content: bytes) -> bytes:
         source.write_bytes(content)
         output.mkdir()
         profile.mkdir()
+        libreoffice = find_libreoffice_command()
+        if not libreoffice:
+            raise ValueError(".xls ?뚯씪??蹂?섑븯吏 紐삵뻽?듬땲??")
         command = [
-            "/usr/bin/libreoffice", "--headless", "--nologo", "--nodefault", "--nofirststartwizard",
+            libreoffice, "--headless", "--nologo", "--nodefault", "--nofirststartwizard",
             f"-env:UserInstallation={profile.as_uri()}", "--convert-to", "xlsx", "--outdir", str(output), str(source),
         ]
         try:
@@ -109,11 +199,11 @@ def _convert_xls_to_xlsx(content: bytes) -> bytes:
         return converted.read_bytes()
 
 
-def read_first_sheet(content: bytes, source_file: str = "") -> list[dict[str, str]]:
+def read_first_sheet(content: bytes, source_file: str = "", password: str = "") -> list[dict[str, str]]:
     if content.lstrip().lower().startswith((b"<html", b"<!doctype html")):
         return _read_html_table(content)
     if source_file.lower().endswith(".xls") or content.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
-        content = _convert_xls_to_xlsx(content)
+        content = _convert_xls_to_xlsx(content, password)
     with zipfile.ZipFile(io.BytesIO(content)) as archive:
         names = set(archive.namelist())
         shared: list[str] = []
