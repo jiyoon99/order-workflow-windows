@@ -209,6 +209,8 @@ SERVER_CONTROL.bat
 
 `SERVER_CONTROL.bat`는 관리자 권한으로 다시 실행된 뒤 서비스 상태를 보여주고, 번호 선택 방식으로 서버를 제어합니다.
 
+![SERVER_CONTROL.bat 운영 콘솔 화면](docs/images/real-server-control-console.png)
+
 | 메뉴 | 기능 |
 | --- | --- |
 | `1` | 서비스 시작 |
